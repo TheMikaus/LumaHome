@@ -19,7 +19,7 @@
 #define CTH_LAUNCHER_TO_SD_DELTA (CTH_SD_RAW_ADDRESS - CTH_NAND_RAW_ADDRESS)
 #define CTH_REQUEST_MAGIC 0x53544843
 #define CTH_REQUEST_VERSION 3
-#define CTH_SORT_BUILD_VERSION "1.0.0-independent-folder-placement"
+#define CTH_SORT_BUILD_VERSION "0.1.0-rc1"
 #define CTH_FRAMEWORK_BUILD_VERSION "0.7.7-multi-home"
 #define CTH_FOLDER_POSITION_OFFSET 0x11DC
 #define CTH_FOLDER_NAME_OFFSET 0x1560
@@ -1133,7 +1133,7 @@ static void WriteSortJournal(const char *stage, Result result)
     g_launcherCandidateCount = 0;
     char text[256];
     int length = sprintf(text,
-        "Cthulhu persistent sort journal v1\n"
+        "LumaHome persistent sort journal v1\n"
         "sorter_version=" CTH_SORT_BUILD_VERSION "\n"
         "stage=%s\nresult=%08lx\n"
         "A final result of ffffffff means the stage had started.\n",
@@ -2318,7 +2318,7 @@ static Result WriteSortTransactionReport(Result result, u16 algorithm, u32 mutat
 {
     char report[512];
     int length = sprintf(report,
-        "Cthulhu HOME Menu sort transaction v3\n"
+        "LumaHome HOME Menu sort transaction v3\n"
         "sorter_version=" CTH_SORT_BUILD_VERSION "\n"
         "result=%08lx\nalgorithm=%u\ntitle_mutations=%lu\nfolder_mutations=%lu\n"
         "raw=%08lx\nprocessed=%08lx\n"
@@ -2739,12 +2739,13 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
     return res;
 }
 
-static u32 ScanLiveIconClassV195(Handle home)
+static u32 ScanLiveIconClassV010Rc1(Handle home)
 {
     char *report = g_layoutBackrefReport;
     int length = sprintf(report,
-        "Cthulhu live icon class scan\n"
-        "scan_version=1.9.5\nraw=%08lx\nprocessed=%08lx\n"
+        "LumaHome live icon map report\n"
+        "release=0.1.0-rc1\nscan_version=1.9.5\n"
+        "raw=%08lx\nprocessed=%08lx\n"
         "wrapper=003827d8\nrebuild_subobject=003827e4\n",
         g_lastRawAddress, g_lastProcessedAddress);
     const u32 localWindow = 0x00900000;
@@ -3154,7 +3155,7 @@ static u32 ScanLiveIconClassV195(Handle home)
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/Cthulhu/icon-model-v195.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc1.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -3184,7 +3185,7 @@ Result CthulhuHomeMenu_RunBackgroundSort(u16 selectedAlgorithm,
         res = ApplySdSort(selectedAlgorithm, true, foldersFirst,
                           algorithmOut, mutationsOut);
         u32 iconOwnerAddress = R_SUCCEEDED(res) ?
-            ScanLiveIconClassV195(home) : 0;
+            ScanLiveIconClassV010Rc1(home) : 0;
         (void)iconOwnerAddress;
         u32 rebuildOwnerAddress = 0x003827E4;
         u32 publishOwnerAddress = 0x003827D8;
@@ -3222,7 +3223,7 @@ Result CthulhuHomeMenu_RunBackgroundSort(u16 selectedAlgorithm,
                 res = (Result)-78;
             char nativeReport[768];
             int nativeLength = sprintf(nativeReport,
-                "Cthulhu HOME native rebuild\n"
+                "LumaHome HOME native rebuild\n"
                 "sorter_version=" CTH_SORT_BUILD_VERSION "\n"
                 "rebuild_owner=%08lx\npublish_owner=%08lx\n"
                 "owner_matches=%lu\nrequest=%lu\nack=%lu\n"
@@ -3265,7 +3266,7 @@ void CthulhuHomeMenu_ApplySdSort(void)
     Draw_Lock();
     Draw_ClearFramebuffer();
     Draw_DrawString(10, 10, COLOR_TITLE,
-                    "Apply Cthulhu sort v" CTH_SORT_BUILD_VERSION);
+                    "Apply LumaHome sort v" CTH_SORT_BUILD_VERSION);
     Draw_DrawString(10, 35, COLOR_WHITE,
         "Uses the reusable title catalog in\n"
         "/3ds/Cthulhu/sort-request.bin.\n\n"
@@ -3293,7 +3294,7 @@ void CthulhuHomeMenu_ApplySdSort(void)
     {
         Draw_Lock();
         Draw_ClearFramebuffer();
-        Draw_DrawString(10, 10, COLOR_TITLE, "Cthulhu SD sort result");
+        Draw_DrawString(10, 10, COLOR_TITLE, "LumaHome SD sort result");
         if (R_SUCCEEDED(res))
         {
             Draw_DrawFormattedString(10, 35, COLOR_WHITE,

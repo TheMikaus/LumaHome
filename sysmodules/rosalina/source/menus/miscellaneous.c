@@ -76,12 +76,12 @@ Menu miscellaneousMenu = {
         { "Dump DSP firmware", METHOD, .method = &MiscellaneousMenu_DumpDspFirm },
         { "Scan HOME Menu layouts", METHOD, .method = &CthulhuHomeMenu_DumpLayoutReport },
         { "Attach HOME Menu runtime", METHOD, .method = &CthulhuHomeMenu_AttachRuntime },
-        { "Check HOME OSD V167 / Live V195", METHOD, .method = &CthulhuHomeMenu_CheckStaticHook },
-        { "Apply Cthulhu title sort", METHOD, .method = &CthulhuHomeMenu_ApplySdSort },
-        { "Arm Cthulhu folder sort", METHOD, .method = &CthulhuHomeMenu_ArmFolderSort },
-        { "Refresh Cthulhu catalog", METHOD, .method = &CthulhuHomeMenu_RefreshCatalog },
-        { "Search Cthulhu titles", METHOD, .method = &CthulhuHomeMenu_Search },
-        { "Restore Cthulhu layout", METHOD, .method = &CthulhuHomeMenu_RestoreSdSort },
+        { "LumaHome 0.1.0-rc1 status", METHOD, .method = &CthulhuHomeMenu_CheckStaticHook },
+        { "Apply LumaHome title sort", METHOD, .method = &CthulhuHomeMenu_ApplySdSort },
+        { "Arm LumaHome folder sort", METHOD, .method = &CthulhuHomeMenu_ArmFolderSort },
+        { "Refresh LumaHome catalog", METHOD, .method = &CthulhuHomeMenu_RefreshCatalog },
+        { "Search LumaHome titles", METHOD, .method = &CthulhuHomeMenu_Search },
+        { "Restore LumaHome layout", METHOD, .method = &CthulhuHomeMenu_RestoreSdSort },
         {},
     }
 };

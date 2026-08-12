@@ -189,7 +189,7 @@ static void writeLifecycle(u32 pid, const char *state, Result result,
 {
     char report[768];
     int n = sprintf(report,
-        "Cthulhu HOME hook lifecycle log\n"
+        "LumaHome HOME hook lifecycle log\n"
         "runtime_version=1.8.4\nmode=active-home-controller-v184\n"
         "pid=%lu\nstate=%s\nresult=%08lx\nmarker=%08lx\n"
         "heartbeat=%lu\npanel=%08lx\nframe_hook=%08lx\n"
@@ -291,7 +291,7 @@ static void writeWatchdog(u32 pid, Result result, u32 marker, u32 heartbeat,
         marker != CTH_MARKER_V167 ? "marker-invalid" :
         stallSamples >= 3 ? "heartbeat-stalled" : "healthy";
     int n = sprintf(report,
-        "Cthulhu independent HOME watchdog\n"
+        "LumaHome independent HOME watchdog\n"
         "watchdog_version=1.8.4\nbase_overlay=V167\n"
         "state=%s\nresult=%08lx\n"
         "pid=%lu\npid_changes=%lu\nsamples=%lu\n"
@@ -451,7 +451,7 @@ static void renderMenu(u8 *panel, u32 selection, bool reverse,
                        Result result, u32 mutations)
 {
     memset(panel, 0x20, CTH_PANEL_SIZE);
-    drawText(panel, 5, 8, "CTHULHU SORT V167", false);
+    drawText(panel, 5, 8, "LUMAHOME 0.1 RC1", false);
     drawText(panel, 5, 30, selection == 0 ? "> DIRECTION" : "  DIRECTION", selection == 0);
     drawText(panel, 5, 43, reverse ? "  Z-A" : "  A-Z", selection == 0);
     drawText(panel, 5, 64, selection == 1 ? "> FOLDER PLACEMENT" : "  FOLDER PLACEMENT", selection == 1);
@@ -466,8 +466,8 @@ static void renderMenu(u8 *panel, u32 selection, bool reverse,
         char line[64];
         sprintf(line, "READY %lu", mutations);
         drawText(panel, 5, 158, line, false);
-        drawText(panel, 5, 171, "POWER OFF", false);
-        drawText(panel, 5, 184, "TO FINISH", false);
+        drawText(panel, 5, 171, "LIVE MAP UPDATED", false);
+        drawText(panel, 5, 184, "REBOOT NOT NEEDED", false);
     }
     else if (state == CTH_FAILED)
     {
@@ -493,8 +493,9 @@ static void writeSnapshot(u32 pid, volatile u32 *v, u32 held, u32 pressed,
 {
     char report[1800];
     int n = sprintf(report,
-        "Cthulhu HOME OSD automatic runtime log\n"
-        "runtime_version=1.8.4\nmode=active-home-controller-v184\n"
+        "LumaHome HOME OSD automatic runtime log\n"
+        "release=0.1.0-rc1\nruntime_version=1.8.4\n"
+        "mode=active-home-controller-v184\n"
         "pid=%lu\nmarker=%08lx\nmarker_ok=%u\n"
         "heartbeat=%lu\noverlay=%lu\nheld=%08lx\npressed=%08lx\n"
         "selection=%lu\ndirection=%s\nfolder_placement=%s\n"
@@ -526,7 +527,7 @@ static void writeSnapshot(u32 pid, volatile u32 *v, u32 held, u32 pressed,
         v[0xF8 / 4], v[0xFC / 4], v[0x100 / 4], v[0x104 / 4]);
     IFile file;
     Result res = IFile_Open(&file, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/Cthulhu/framework-live-v167.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/runtime.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE);
     if (R_SUCCEEDED(res))
     {

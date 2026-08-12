@@ -7,7 +7,7 @@ sorting through a top-screen overlay.
 ## Current baseline
 
 - Upstream base: Luma3DS commit `d30ac8d` (after v13.4).
-- Working runtime baseline: V195.
+- Release candidate: `0.1.0-rc1`, derived from the working V195 runtime.
 - Overlay shortcut: `L + Y`.
 - HOME Menu navigation is suppressed while the overlay is open.
 - Hooks recover after returning from system applications such as Notifications.
@@ -16,10 +16,10 @@ sorting through a top-screen overlay.
 - The original root firmware is not replaced during development. Test builds
   are chainloaded from `/luma/payloads`.
 
-The source still contains `cthulhu_` internal prefixes and SD log paths from the
-prototype. These names are intentionally retained in this baseline because the
-working hook ABI and diagnostic history depend on them. They can be renamed in
-a separate, testable cleanup change.
+The source still contains `cthulhu_` internal prefixes and compatibility paths
+from the prototype. These are intentionally retained because the working hook
+ABI, persistent-sort inputs, and diagnostic history depend on them. Active
+release-candidate reports are written under `/3ds/LumaHome`.
 
 ## Building
 
@@ -35,8 +35,8 @@ rename a verified build to a versioned `LumaHome*.firm` and place it in
 
 ## Status and scope
 
-V195 is a hardware-tested development checkpoint, not an upstream Luma3DS
-release. Persistent sorting, live title movement, overlay input, resume from
+`0.1.0-rc1` is a hardware-test candidate, not an upstream Luma3DS release.
+Persistent sorting, live title movement, overlay input, resume from
 Notifications, and power-off have been tested on the development console.
 Live folder movement and search/filtering remain future work.
 
