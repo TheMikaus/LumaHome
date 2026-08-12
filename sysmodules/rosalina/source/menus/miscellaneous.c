@@ -38,6 +38,7 @@
 #include "pmdbgext.h"
 #include "plugin.h"
 #include "process_patches.h"
+#include "home_menu_diagnostics.h"
 
 typedef struct DspFirmSegmentHeader {
     u32 offset;
@@ -73,6 +74,14 @@ Menu miscellaneousMenu = {
         { "Update time and date via NTP", METHOD, .method = &MiscellaneousMenu_UpdateTimeDateNtp },
         { "Nullify user time offset", METHOD, .method = &MiscellaneousMenu_NullifyUserTimeOffset },
         { "Dump DSP firmware", METHOD, .method = &MiscellaneousMenu_DumpDspFirm },
+        { "Scan HOME Menu layouts", METHOD, .method = &CthulhuHomeMenu_DumpLayoutReport },
+        { "Attach HOME Menu runtime", METHOD, .method = &CthulhuHomeMenu_AttachRuntime },
+        { "Check HOME OSD V167 / Live V195", METHOD, .method = &CthulhuHomeMenu_CheckStaticHook },
+        { "Apply Cthulhu title sort", METHOD, .method = &CthulhuHomeMenu_ApplySdSort },
+        { "Arm Cthulhu folder sort", METHOD, .method = &CthulhuHomeMenu_ArmFolderSort },
+        { "Refresh Cthulhu catalog", METHOD, .method = &CthulhuHomeMenu_RefreshCatalog },
+        { "Search Cthulhu titles", METHOD, .method = &CthulhuHomeMenu_Search },
+        { "Restore Cthulhu layout", METHOD, .method = &CthulhuHomeMenu_RestoreSdSort },
         {},
     }
 };

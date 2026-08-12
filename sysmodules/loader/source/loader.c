@@ -5,6 +5,7 @@
 #include "ifile.h"
 #include "util.h"
 #include "hbldr.h"
+#include "cthulhu_home_static_patch.h"
 
 #define SYSMODULE_CXI_COOKIE_MASK 0xEEEE000000000000ull
 
@@ -430,6 +431,8 @@ static Result LoadProcessImpl(Handle *outProcessHandle, const ExHeader_Info *exh
     u64 titleId = exhi->aci.local_caps.title_id;
     if (R_SUCCEEDED(res = loadCode(exhi, programHandle, &mapped)))
     {
+        CthulhuHomeStaticPatch_Apply(titleId, (u8 *)mapped.text_addr,
+                                     mapped.total_size << 12);
         u32     *code = (u32 *)mapped.text_addr;
         bool    isHomebrew = code[0] == 0xEA000006 && code[8] == 0xE1A0400E;
 

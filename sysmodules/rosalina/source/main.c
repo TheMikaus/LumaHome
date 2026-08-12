@@ -33,6 +33,8 @@
 #include "sleep.h"
 #include "MyThread.h"
 #include "menus/miscellaneous.h"
+#include "menus/home_menu_diagnostics.h"
+#include "cthulhu_runtime_logger.h"
 #include "menus/debugger.h"
 #include "menus/screen_filters.h"
 #include "menus/cheats.h"
@@ -244,6 +246,7 @@ static const ServiceManagerNotificationEntry notifications[] = {
     { PTMNOTIFID_FULLY_WAKING_UP,   handleSleepNotification                 },
     { PTMNOTIFID_FULLY_AWAKE,       handleSleepNotification                 },
     { PTMNOTIFID_HALF_AWAKE,        handleSleepNotification                 },
+    { PTMNOTIFID_SHUTDOWN,           CthulhuHomeMenu_HandleShutdownNotification },
     { 0x213,                        handleShellNotification                 },
     { 0x214,                        handleShellNotification                 },
     { 0x1000,                       handleNextApplicationDebuggedByForce    },
@@ -270,6 +273,7 @@ int main(void)
     MyThread *taskRunnerThread = taskRunnerCreateThread();
     MyThread *errDispThread = errDispCreateThread();
     bootdiagCreateThread();
+    CthulhuRuntimeLogger_CreateThread();
 
     if (R_FAILED(ServiceManager_Run(services, notifications, NULL)))
         svcBreak(USERBREAK_PANIC);
