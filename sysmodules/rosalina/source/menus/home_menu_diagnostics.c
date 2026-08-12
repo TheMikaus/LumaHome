@@ -19,7 +19,7 @@
 #define CTH_LAUNCHER_TO_SD_DELTA (CTH_SD_RAW_ADDRESS - CTH_NAND_RAW_ADDRESS)
 #define CTH_REQUEST_MAGIC 0x53544843
 #define CTH_REQUEST_VERSION 3
-#define CTH_SORT_BUILD_VERSION "0.1.0-rc1"
+#define CTH_SORT_BUILD_VERSION "0.1.0-rc2"
 #define CTH_FRAMEWORK_BUILD_VERSION "0.7.7-multi-home"
 #define CTH_FOLDER_POSITION_OFFSET 0x11DC
 #define CTH_FOLDER_NAME_OFFSET 0x1560
@@ -2739,12 +2739,14 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
     return res;
 }
 
-static u32 ScanLiveIconClassV010Rc1(Handle home)
+static bool g_liveMapChanged = false;
+
+static u32 ScanLiveIconClassV010Rc2(Handle home)
 {
     char *report = g_layoutBackrefReport;
     int length = sprintf(report,
         "LumaHome live icon map report\n"
-        "release=0.1.0-rc1\nscan_version=1.9.5\n"
+        "release=0.1.0-rc2\nscan_version=1.9.6\n"
         "raw=%08lx\nprocessed=%08lx\n"
         "wrapper=003827d8\nrebuild_subobject=003827e4\n",
         g_lastRawAddress, g_lastProcessedAddress);
@@ -2910,6 +2912,9 @@ static u32 ScanLiveIconClassV010Rc1(Handle home)
         u32 matchedRecords = 0;
         u16 desiredRecords[CTH_PROCESSED_ENTRIES] = {0};
         u32 desiredCount = 0, desiredMissing = 0;
+        u16 folderRecords[CTH_PROCESSED_ENTRIES] = {0};
+        u32 folderRecordCount = 0;
+        g_liveMapChanged = false;
         const u32 pointerAddress = iconModel + 0x398F8;
         const u32 pointerPage = pointerAddress & ~0xFFF;
         Result map = svcMapProcessMemoryEx(CUR_PROCESS_HANDLE, localWindow,
@@ -2971,6 +2976,9 @@ static u32 ScanLiveIconClassV010Rc1(Handle home)
                         if (recordTitle != titleId) continue;
                         if (desiredCount < CTH_PROCESSED_ENTRIES)
                             desiredRecords[desiredCount++] = (u16)recordIndex;
+                        if (gridIndex >= CTH_LAYOUT_SLOTS &&
+                            folderRecordCount < CTH_PROCESSED_ENTRIES)
+                            folderRecords[folderRecordCount++] = (u16)recordIndex;
                         if (matched < 24)
                         {
                             length += sprintf(report + length,
@@ -2993,8 +3001,9 @@ static u32 ScanLiveIconClassV010Rc1(Handle home)
             }
             length += sprintf(report + length,
                 "matched_sd_records=%lu\ndesired_records=%lu\n"
-                "desired_missing=%lu\nfull_model_result=%08lx\n",
-                matched, desiredCount, desiredMissing, map);
+                "folder_records=%lu\ndesired_missing=%lu\n"
+                "full_model_result=%08lx\n", matched, desiredCount,
+                folderRecordCount, desiredMissing, map);
             matchedRecords = matched;
         }
 
@@ -3043,6 +3052,14 @@ static u32 ScanLiveIconClassV010Rc1(Handle home)
             u16 positions[420] = {0};
             u16 ordered[420] = {0};
             u32 positionCount = 0, orderedCount = 0;
+            u32 staleFolderMembers = 0;
+            for (u32 i = 0; i < 420; i++)
+                for (u32 f = 0; f < folderRecordCount; f++)
+                    if (inlineMap[i] == (s16)folderRecords[f])
+                    {
+                        staleFolderMembers++;
+                        break;
+                    }
             for (u32 i = 0; i < 420; i++)
                 for (u32 d = 0; d < desiredCount; d++)
                     if (inlineMap[i] == (s16)desiredRecords[d])
@@ -3058,13 +3075,15 @@ static u32 ScanLiveIconClassV010Rc1(Handle home)
                         break;
                     }
             u32 inlineChanged = 0;
-            if (positionCount > 1 && positionCount == orderedCount)
+            if (staleFolderMembers == 0 && positionCount > 1 &&
+                positionCount == orderedCount)
                 for (u32 i = 0; i < positionCount; i++)
                     if (inlineMap[positions[i]] != (s16)ordered[i])
                     {
                         inlineMap[positions[i]] = (s16)ordered[i];
                         inlineChanged++;
                     }
+            g_liveMapChanged = inlineChanged != 0;
             if (inlineChanged != 0)
             {
                 svcFlushProcessDataCache(CUR_PROCESS_HANDLE,
@@ -3073,8 +3092,10 @@ static u32 ScanLiveIconClassV010Rc1(Handle home)
             }
             length += sprintf(report + length,
                 "inline_positions=%lu\ninline_ordered=%lu\n"
-                "inline_changed=%lu\n", positionCount, orderedCount,
-                inlineChanged);
+                "inline_stale_folder_members=%lu\ninline_changed=%lu\n"
+                "live_update_deferred=%lu\n", positionCount, orderedCount,
+                staleFolderMembers, inlineChanged,
+                staleFolderMembers != 0 ? 1UL : 0UL);
             svcUnmapProcessMemoryEx(CUR_PROCESS_HANDLE, localWindow, 0x1000);
         }
         length += sprintf(report + length,
@@ -3128,7 +3149,8 @@ static u32 ScanLiveIconClassV010Rc1(Handle home)
                             break;
                         }
                 u32 indirectChanged = 0;
-                if (positionCount > 1 && positionCount == orderedCount)
+                if (g_liveMapChanged && positionCount > 1 &&
+                    positionCount == orderedCount)
                     for (u32 i = 0; i < positionCount; i++)
                         if (indices[positions[i]] != (s16)ordered[i])
                         {
@@ -3155,7 +3177,7 @@ static u32 ScanLiveIconClassV010Rc1(Handle home)
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc1.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc2.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -3185,7 +3207,7 @@ Result CthulhuHomeMenu_RunBackgroundSort(u16 selectedAlgorithm,
         res = ApplySdSort(selectedAlgorithm, true, foldersFirst,
                           algorithmOut, mutationsOut);
         u32 iconOwnerAddress = R_SUCCEEDED(res) ?
-            ScanLiveIconClassV010Rc1(home) : 0;
+            ScanLiveIconClassV010Rc2(home) : 0;
         (void)iconOwnerAddress;
         u32 rebuildOwnerAddress = 0x003827E4;
         u32 publishOwnerAddress = 0x003827D8;
@@ -3211,7 +3233,7 @@ Result CthulhuHomeMenu_RunBackgroundSort(u16 selectedAlgorithm,
             commandChannel[0xE0 / 4] = publishOwnerAddress;
             /* V195 only requests the already-validated refresh callback after
                its membership-preserving live index-map permutation. */
-            commandChannel[0x100 / 4] = iconOwnerAddress;
+            commandChannel[0x100 / 4] = g_liveMapChanged ? iconOwnerAddress : 0;
             commandChannel[0xCC / 4] = request;
             svcFlushProcessDataCache(CUR_PROCESS_HANDLE,
                                      (u32)commandChannel & ~0xFFF, 0x1000);
