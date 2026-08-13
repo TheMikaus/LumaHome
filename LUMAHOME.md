@@ -7,7 +7,7 @@ sorting through a top-screen overlay.
 ## Current baseline
 
 - Upstream base: Luma3DS commit `d30ac8d` (after v13.4).
-- Release candidate: `0.1.0-rc3`, derived from the working V195 runtime.
+- Release candidate: `0.1.0-rc4`, derived from the working V195 runtime.
 - Overlay shortcut: `L + Y`.
 - HOME Menu navigation is suppressed while the overlay is open.
 - Hooks recover after returning from system applications such as Notifications.
@@ -35,7 +35,7 @@ rename a verified build to a versioned `LumaHome*.firm` and place it in
 
 ## Status and scope
 
-`0.1.0-rc3` is a hardware-test candidate, not an upstream Luma3DS release.
+`0.1.0-rc4` is a hardware-test candidate, not an upstream Luma3DS release.
 Persistent sorting, live title movement, overlay input, resume from
 Notifications, and power-off have been tested on the development console.
 Live folder movement and search/filtering remain future work.
