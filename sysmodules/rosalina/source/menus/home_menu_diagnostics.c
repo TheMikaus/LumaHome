@@ -19,7 +19,7 @@
 #define CTH_LAUNCHER_TO_SD_DELTA (CTH_SD_RAW_ADDRESS - CTH_NAND_RAW_ADDRESS)
 #define CTH_REQUEST_MAGIC 0x53544843
 #define CTH_REQUEST_VERSION 3
-#define CTH_SORT_BUILD_VERSION "0.1.0-rc6"
+#define CTH_SORT_BUILD_VERSION "0.1.0-rc7"
 #define CTH_FRAMEWORK_BUILD_VERSION "0.7.7-multi-home"
 #define CTH_FOLDER_POSITION_OFFSET 0x11DC
 #define CTH_FOLDER_NAME_OFFSET 0x1560
@@ -2599,9 +2599,30 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
         if (R_SUCCEEDED(res) &&
             (firstTitlePosition >= CTH_LAYOUT_SLOTS || lastTitlePosition < 0))
             res = (Result)-103;
+        if (R_SUCCEEDED(res) && foldersFirst)
+        {
+            /* Insert folders at the first usable title coordinate. Positions
+               below it may be HOME-reserved and are not valid insertion
+               targets. Shift titles forward to make non-colliding space. */
+            for (u32 i = 0; i < mutationCount; i++)
+            {
+                if (g_sortMutations[i].folder != -1)
+                    continue;
+                s32 shifted = (s32)g_sortMutations[i].newPosition +
+                              (s32)folderCount;
+                if (shifted >= CTH_LAYOUT_SLOTS)
+                {
+                    res = (Result)-105;
+                    break;
+                }
+                g_sortMutations[i].newPosition = (s16)shifted;
+            }
+            if (R_SUCCEEDED(res))
+                lastTitlePosition += (s16)folderCount;
+        }
         for (u32 i = 0; R_SUCCEEDED(res) && i < folderCount; i++)
         {
-            s16 target = foldersFirst ? firstTitlePosition - folderCount + i :
+            s16 target = foldersFirst ? firstTitlePosition + i :
                          lastTitlePosition + 1 + i;
             if (target < 0 || target >= CTH_LAYOUT_SLOTS)
             {
@@ -2749,12 +2770,12 @@ static u16 g_liveInlineOrdered[420];
 static u16 g_liveIndirectPositions[420];
 static u16 g_liveIndirectOrdered[420];
 
-static u32 ScanLiveIconClassV010Rc6(Handle home)
+static u32 ScanLiveIconClassV010Rc7(Handle home)
 {
     char *report = g_layoutBackrefReport;
     int length = sprintf(report,
         "LumaHome live icon map report\n"
-        "release=0.1.0-rc6\nscan_version=2.0.0\n"
+        "release=0.1.0-rc7\nscan_version=2.0.1\n"
         "raw=%08lx\nprocessed=%08lx\n"
         "wrapper=003827d8\nrebuild_subobject=003827e4\n",
         g_lastRawAddress, g_lastProcessedAddress);
@@ -3206,7 +3227,7 @@ static u32 ScanLiveIconClassV010Rc6(Handle home)
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc6.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc7.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -3236,7 +3257,7 @@ Result CthulhuHomeMenu_RunBackgroundSort(u16 selectedAlgorithm,
         res = ApplySdSort(selectedAlgorithm, true, foldersFirst,
                           algorithmOut, mutationsOut);
         u32 iconOwnerAddress = R_SUCCEEDED(res) ?
-            ScanLiveIconClassV010Rc6(home) : 0;
+            ScanLiveIconClassV010Rc7(home) : 0;
         if (commandChannel != NULL)
         {
             commandChannel[0x108 / 4] = R_SUCCEEDED(res) && g_liveMapPartial;
