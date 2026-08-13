@@ -19,7 +19,7 @@
 #define CTH_LAUNCHER_TO_SD_DELTA (CTH_SD_RAW_ADDRESS - CTH_NAND_RAW_ADDRESS)
 #define CTH_REQUEST_MAGIC 0x53544843
 #define CTH_REQUEST_VERSION 3
-#define CTH_SORT_BUILD_VERSION "0.1.0-rc7"
+#define CTH_SORT_BUILD_VERSION "0.1.0-rc8"
 #define CTH_FRAMEWORK_BUILD_VERSION "0.7.7-multi-home"
 #define CTH_FOLDER_POSITION_OFFSET 0x11DC
 #define CTH_FOLDER_NAME_OFFSET 0x1560
@@ -2743,9 +2743,35 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
     {
         memcpy((void *)rawAddress, g_sortRaw, sizeof(g_sortRaw));
         memcpy((void *)processedAddress, g_sortGrid, sizeof(g_sortGrid));
+        u32 liveFolderWrites = 0;
+        for (u32 i = 0; stageFolders && i < folderCount; i++)
+        {
+            u32 offset = CTH_FOLDER_POSITION_OFFSET - 8 +
+                         g_folderMutations[i].id * 2;
+            volatile s16 *livePosition = (volatile s16 *)(launcherAddress +
+                                                          offset);
+            *livePosition = g_folderMutations[i].newPosition;
+            if (*livePosition != g_folderMutations[i].newPosition)
+            {
+                res = (Result)-106;
+                break;
+            }
+            liveFolderWrites++;
+        }
         svcFlushProcessDataCache(process, rawAddress, sizeof(g_sortRaw));
         svcFlushProcessDataCache(process, processedAddress, sizeof(g_sortGrid));
-        *mutationsOut = mutationCount;
+        if (liveFolderWrites != 0)
+        {
+            svcFlushProcessDataCache(CUR_PROCESS_HANDLE, launcherAddress,
+                                     CTH_LAUNCHER_SIZE - 8);
+            svcFlushProcessDataCache(process, launcherAddress,
+                                     CTH_LAUNCHER_SIZE - 8);
+        }
+        g_sortDetailsLength += sprintf(g_sortDetails + g_sortDetailsLength,
+            "\n[LIVE_FOLDER_WRITE]\naddress=%08lx writes=%lu result=%08lx\n",
+            launcherAddress, (unsigned long)liveFolderWrites, res);
+        if (R_SUCCEEDED(res))
+            *mutationsOut = mutationCount;
     }
     if (launcherMappedSeparately)
         svcUnmapProcessMemoryEx(CUR_PROCESS_HANDLE, launcherMem.base_addr,
@@ -2770,12 +2796,12 @@ static u16 g_liveInlineOrdered[420];
 static u16 g_liveIndirectPositions[420];
 static u16 g_liveIndirectOrdered[420];
 
-static u32 ScanLiveIconClassV010Rc7(Handle home)
+static u32 ScanLiveIconClassV010Rc8(Handle home)
 {
     char *report = g_layoutBackrefReport;
     int length = sprintf(report,
         "LumaHome live icon map report\n"
-        "release=0.1.0-rc7\nscan_version=2.0.1\n"
+        "release=0.1.0-rc8\nscan_version=2.0.2\n"
         "raw=%08lx\nprocessed=%08lx\n"
         "wrapper=003827d8\nrebuild_subobject=003827e4\n",
         g_lastRawAddress, g_lastProcessedAddress);
@@ -3227,7 +3253,7 @@ static u32 ScanLiveIconClassV010Rc7(Handle home)
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc7.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc8.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -3257,7 +3283,7 @@ Result CthulhuHomeMenu_RunBackgroundSort(u16 selectedAlgorithm,
         res = ApplySdSort(selectedAlgorithm, true, foldersFirst,
                           algorithmOut, mutationsOut);
         u32 iconOwnerAddress = R_SUCCEEDED(res) ?
-            ScanLiveIconClassV010Rc7(home) : 0;
+            ScanLiveIconClassV010Rc8(home) : 0;
         if (commandChannel != NULL)
         {
             commandChannel[0x108 / 4] = R_SUCCEEDED(res) && g_liveMapPartial;
