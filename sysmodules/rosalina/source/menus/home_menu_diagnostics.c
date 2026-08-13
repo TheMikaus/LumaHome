@@ -19,7 +19,7 @@
 #define CTH_LAUNCHER_TO_SD_DELTA (CTH_SD_RAW_ADDRESS - CTH_NAND_RAW_ADDRESS)
 #define CTH_REQUEST_MAGIC 0x53544843
 #define CTH_REQUEST_VERSION 3
-#define CTH_SORT_BUILD_VERSION "0.1.0-rc4"
+#define CTH_SORT_BUILD_VERSION "0.1.0-rc5"
 #define CTH_FRAMEWORK_BUILD_VERSION "0.7.7-multi-home"
 #define CTH_FOLDER_POSITION_OFFSET 0x11DC
 #define CTH_FOLDER_NAME_OFFSET 0x1560
@@ -2741,13 +2741,20 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
 
 static bool g_liveMapChanged = false;
 static bool g_liveMapPartial = false;
+static u16 g_liveDesiredRecords[CTH_PROCESSED_ENTRIES];
+static u16 g_liveTopLevelRecords[CTH_LAYOUT_SLOTS];
+static u16 g_liveFolderRecords[CTH_PROCESSED_ENTRIES];
+static u16 g_liveInlinePositions[420];
+static u16 g_liveInlineOrdered[420];
+static u16 g_liveIndirectPositions[420];
+static u16 g_liveIndirectOrdered[420];
 
-static u32 ScanLiveIconClassV010Rc4(Handle home)
+static u32 ScanLiveIconClassV010Rc5(Handle home)
 {
     char *report = g_layoutBackrefReport;
     int length = sprintf(report,
         "LumaHome live icon map report\n"
-        "release=0.1.0-rc4\nscan_version=1.9.8\n"
+        "release=0.1.0-rc5\nscan_version=1.9.9\n"
         "raw=%08lx\nprocessed=%08lx\n"
         "wrapper=003827d8\nrebuild_subobject=003827e4\n",
         g_lastRawAddress, g_lastProcessedAddress);
@@ -2911,12 +2918,12 @@ static u32 ScanLiveIconClassV010Rc4(Handle home)
         u32 matchedGrid[24] = {0};
         u32 matchedRecord[24] = {0};
         u32 matchedRecords = 0;
-        u16 desiredRecords[CTH_PROCESSED_ENTRIES] = {0};
         u32 desiredCount = 0, desiredMissing = 0;
-        u16 topLevelRecords[CTH_LAYOUT_SLOTS] = {0};
         u32 topLevelRecordCount = 0;
-        u16 folderRecords[CTH_PROCESSED_ENTRIES] = {0};
         u32 folderRecordCount = 0;
+        memset(g_liveDesiredRecords, 0, sizeof(g_liveDesiredRecords));
+        memset(g_liveTopLevelRecords, 0, sizeof(g_liveTopLevelRecords));
+        memset(g_liveFolderRecords, 0, sizeof(g_liveFolderRecords));
         g_liveMapChanged = false;
         g_liveMapPartial = false;
         const u32 pointerAddress = iconModel + 0x398F8;
@@ -2979,13 +2986,15 @@ static u32 ScanLiveIconClassV010Rc4(Handle home)
                         u64 recordTitle = ((u64)w[1] << 32) | w[0];
                         if (recordTitle != titleId) continue;
                         if (desiredCount < CTH_PROCESSED_ENTRIES)
-                            desiredRecords[desiredCount++] = (u16)recordIndex;
+                            g_liveDesiredRecords[desiredCount++] =
+                                (u16)recordIndex;
                         if (gridIndex >= CTH_LAYOUT_SLOTS &&
                             folderRecordCount < CTH_PROCESSED_ENTRIES)
-                            folderRecords[folderRecordCount++] = (u16)recordIndex;
+                            g_liveFolderRecords[folderRecordCount++] =
+                                (u16)recordIndex;
                         else if (gridIndex < CTH_LAYOUT_SLOTS &&
                                  topLevelRecordCount < CTH_LAYOUT_SLOTS)
-                            topLevelRecords[topLevelRecordCount++] =
+                            g_liveTopLevelRecords[topLevelRecordCount++] =
                                 (u16)recordIndex;
                         if (matched < 24)
                         {
@@ -3058,37 +3067,41 @@ static u32 ScanLiveIconClassV010Rc4(Handle home)
                     match, matchedGrid[match], matchedRecord[match],
                     (long)first, occurrences);
             }
-            u16 positions[420] = {0};
-            u16 ordered[420] = {0};
+            memset(g_liveInlinePositions, 0, sizeof(g_liveInlinePositions));
+            memset(g_liveInlineOrdered, 0, sizeof(g_liveInlineOrdered));
             u32 positionCount = 0, orderedCount = 0;
             u32 staleFolderMembers = 0;
             for (u32 i = 0; i < 420; i++)
                 for (u32 f = 0; f < folderRecordCount; f++)
-                    if (inlineMap[i] == (s16)folderRecords[f])
+                    if (inlineMap[i] == (s16)g_liveFolderRecords[f])
                     {
                         staleFolderMembers++;
                         break;
                     }
             for (u32 i = 0; i < 420; i++)
                 for (u32 d = 0; d < topLevelRecordCount; d++)
-                    if (inlineMap[i] == (s16)topLevelRecords[d])
+                    if (inlineMap[i] == (s16)g_liveTopLevelRecords[d])
                     {
-                        positions[positionCount++] = (u16)i;
+                        g_liveInlinePositions[positionCount++] = (u16)i;
                         break;
                     }
             for (u32 d = 0; d < topLevelRecordCount; d++)
                 for (u32 i = 0; i < positionCount; i++)
-                    if (inlineMap[positions[i]] == (s16)topLevelRecords[d])
+                    if (inlineMap[g_liveInlinePositions[i]] ==
+                        (s16)g_liveTopLevelRecords[d])
                     {
-                        ordered[orderedCount++] = topLevelRecords[d];
+                        g_liveInlineOrdered[orderedCount++] =
+                            g_liveTopLevelRecords[d];
                         break;
                     }
             u32 inlineChanged = 0;
             if (positionCount > 1 && positionCount == orderedCount)
                 for (u32 i = 0; i < positionCount; i++)
-                    if (inlineMap[positions[i]] != (s16)ordered[i])
+                    if (inlineMap[g_liveInlinePositions[i]] !=
+                        (s16)g_liveInlineOrdered[i])
                     {
-                        inlineMap[positions[i]] = (s16)ordered[i];
+                        inlineMap[g_liveInlinePositions[i]] =
+                            (s16)g_liveInlineOrdered[i];
                         inlineChanged++;
                     }
             g_liveMapChanged = inlineChanged != 0;
@@ -3141,30 +3154,36 @@ static u32 ScanLiveIconClassV010Rc4(Handle home)
                         match, matchedGrid[match], matchedRecord[match],
                         (long)first, occurrences);
                 }
-                u16 positions[420] = {0};
-                u16 ordered[420] = {0};
+                memset(g_liveIndirectPositions, 0,
+                       sizeof(g_liveIndirectPositions));
+                memset(g_liveIndirectOrdered, 0,
+                       sizeof(g_liveIndirectOrdered));
                 u32 positionCount = 0, orderedCount = 0;
                 for (u32 i = 0; i < 420; i++)
                     for (u32 d = 0; d < desiredCount; d++)
-                        if (indices[i] == (s16)desiredRecords[d])
+                        if (indices[i] == (s16)g_liveDesiredRecords[d])
                         {
-                            positions[positionCount++] = (u16)i;
+                            g_liveIndirectPositions[positionCount++] = (u16)i;
                             break;
                         }
                 for (u32 d = 0; d < desiredCount; d++)
                     for (u32 i = 0; i < positionCount; i++)
-                        if (indices[positions[i]] == (s16)desiredRecords[d])
+                        if (indices[g_liveIndirectPositions[i]] ==
+                            (s16)g_liveDesiredRecords[d])
                         {
-                            ordered[orderedCount++] = desiredRecords[d];
+                            g_liveIndirectOrdered[orderedCount++] =
+                                g_liveDesiredRecords[d];
                             break;
                         }
                 u32 indirectChanged = 0;
                 if (g_liveMapChanged && positionCount > 1 &&
                     positionCount == orderedCount)
                     for (u32 i = 0; i < positionCount; i++)
-                        if (indices[positions[i]] != (s16)ordered[i])
+                        if (indices[g_liveIndirectPositions[i]] !=
+                            (s16)g_liveIndirectOrdered[i])
                         {
-                            indices[positions[i]] = (s16)ordered[i];
+                            indices[g_liveIndirectPositions[i]] =
+                                (s16)g_liveIndirectOrdered[i];
                             indirectChanged++;
                         }
                 if (indirectChanged != 0)
@@ -3187,7 +3206,7 @@ static u32 ScanLiveIconClassV010Rc4(Handle home)
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc4.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc5.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -3217,7 +3236,7 @@ Result CthulhuHomeMenu_RunBackgroundSort(u16 selectedAlgorithm,
         res = ApplySdSort(selectedAlgorithm, true, foldersFirst,
                           algorithmOut, mutationsOut);
         u32 iconOwnerAddress = R_SUCCEEDED(res) ?
-            ScanLiveIconClassV010Rc4(home) : 0;
+            ScanLiveIconClassV010Rc5(home) : 0;
         if (commandChannel != NULL)
         {
             commandChannel[0x108 / 4] = R_SUCCEEDED(res) && g_liveMapPartial;
