@@ -19,7 +19,7 @@
 #define CTH_LAUNCHER_TO_SD_DELTA (CTH_SD_RAW_ADDRESS - CTH_NAND_RAW_ADDRESS)
 #define CTH_REQUEST_MAGIC 0x53544843
 #define CTH_REQUEST_VERSION 3
-#define CTH_SORT_BUILD_VERSION "0.1.0-rc2"
+#define CTH_SORT_BUILD_VERSION "0.1.0-rc3"
 #define CTH_FRAMEWORK_BUILD_VERSION "0.7.7-multi-home"
 #define CTH_FOLDER_POSITION_OFFSET 0x11DC
 #define CTH_FOLDER_NAME_OFFSET 0x1560
@@ -2741,12 +2741,12 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
 
 static bool g_liveMapChanged = false;
 
-static u32 ScanLiveIconClassV010Rc2(Handle home)
+static u32 ScanLiveIconClassV010Rc3(Handle home)
 {
     char *report = g_layoutBackrefReport;
     int length = sprintf(report,
         "LumaHome live icon map report\n"
-        "release=0.1.0-rc2\nscan_version=1.9.6\n"
+        "release=0.1.0-rc3\nscan_version=1.9.7\n"
         "raw=%08lx\nprocessed=%08lx\n"
         "wrapper=003827d8\nrebuild_subobject=003827e4\n",
         g_lastRawAddress, g_lastProcessedAddress);
@@ -3177,7 +3177,7 @@ static u32 ScanLiveIconClassV010Rc2(Handle home)
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc2.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc3.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -3207,7 +3207,13 @@ Result CthulhuHomeMenu_RunBackgroundSort(u16 selectedAlgorithm,
         res = ApplySdSort(selectedAlgorithm, true, foldersFirst,
                           algorithmOut, mutationsOut);
         u32 iconOwnerAddress = R_SUCCEEDED(res) ?
-            ScanLiveIconClassV010Rc2(home) : 0;
+            ScanLiveIconClassV010Rc3(home) : 0;
+        if (commandChannel != NULL)
+        {
+            commandChannel[0x108 / 4] = R_SUCCEEDED(res) && !g_liveMapChanged;
+            svcFlushProcessDataCache(CUR_PROCESS_HANDLE,
+                                     (u32)commandChannel & ~0xFFF, 0x1000);
+        }
         (void)iconOwnerAddress;
         u32 rebuildOwnerAddress = 0x003827E4;
         u32 publishOwnerAddress = 0x003827D8;
@@ -3225,7 +3231,7 @@ Result CthulhuHomeMenu_RunBackgroundSort(u16 selectedAlgorithm,
                          "atomic-home-unlocked" : "atomic-home-unlock-failed",
                          unlockResult);
         if (R_FAILED(unlockResult)) res = unlockResult;
-        if (R_SUCCEEDED(res) && commandChannel != NULL)
+        if (R_SUCCEEDED(res) && commandChannel != NULL && g_liveMapChanged)
         {
             u32 request = commandChannel[0xCC / 4] + 1;
             if (request == 0) request = 1;

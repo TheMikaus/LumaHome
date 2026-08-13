@@ -26,7 +26,7 @@
 #define CTH_RECOVERY_CHANNEL_LOCAL 0x00700000
 #define CTH_RECOVERY_PANEL_LOCAL 0x00800000
 
-enum { CTH_IDLE, CTH_APPLYING, CTH_SUCCESS, CTH_FAILED };
+enum { CTH_IDLE, CTH_APPLYING, CTH_SUCCESS, CTH_FAILED, CTH_DEFERRED };
 
 static MyThread runtimeThread;
 static u8 CTR_ALIGN(0x1000) runtimeStack[0x2000];
@@ -451,7 +451,7 @@ static void renderMenu(u8 *panel, u32 selection, bool reverse,
                        Result result, u32 mutations)
 {
     memset(panel, 0x20, CTH_PANEL_SIZE);
-    drawText(panel, 5, 8, "LUMAHOME 0.1 RC2", false);
+    drawText(panel, 5, 8, "LUMAHOME 0.1 RC3", false);
     drawText(panel, 5, 30, selection == 0 ? "> DIRECTION" : "  DIRECTION", selection == 0);
     drawText(panel, 5, 43, reverse ? "  Z-A" : "  A-Z", selection == 0);
     drawText(panel, 5, 64, selection == 1 ? "> FOLDER PLACEMENT" : "  FOLDER PLACEMENT", selection == 1);
@@ -476,6 +476,12 @@ static void renderMenu(u8 *panel, u32 selection, bool reverse,
         drawText(panel, 5, 158, line, false);
         drawText(panel, 5, 171, "SEE SORT LOG", false);
     }
+    else if (state == CTH_DEFERRED)
+    {
+        drawText(panel, 5, 158, "SAVED SAFELY", false);
+        drawText(panel, 5, 171, "LIVE MODEL STALE", false);
+        drawText(panel, 5, 184, "REOPEN HOME", false);
+    }
 }
 
 static void flushShared(Handle process, u32 panelAddress)
@@ -494,7 +500,7 @@ static void writeSnapshot(u32 pid, volatile u32 *v, u32 held, u32 pressed,
     char report[1800];
     int n = sprintf(report,
         "LumaHome HOME OSD automatic runtime log\n"
-        "release=0.1.0-rc2\nruntime_version=1.8.4\n"
+        "release=0.1.0-rc3\nruntime_version=1.8.4\n"
         "mode=active-home-controller-v184\n"
         "pid=%lu\nmarker=%08lx\nmarker_ok=%u\n"
         "heartbeat=%lu\noverlay=%lu\nheld=%08lx\npressed=%08lx\n"
@@ -661,6 +667,7 @@ static void runtimeMain(void)
 
                 if (pressed & KEY_A)
                 {
+                    channel[0x108 / 4] = 0;
                     state = CTH_APPLYING;
                     renderMenu(panel, selection, reverse, foldersFirst,
                                state, sortResult, mutations);
@@ -671,7 +678,8 @@ static void runtimeMain(void)
                         &chosen, &mutations);
                     algorithm = chosen;
                     (void)algorithm;
-                    state = R_SUCCEEDED(sortResult) ? CTH_SUCCESS : CTH_FAILED;
+                    state = R_FAILED(sortResult) ? CTH_FAILED :
+                            channel[0x108 / 4] ? CTH_DEFERRED : CTH_SUCCESS;
                     redraw = true;
                 }
             }
