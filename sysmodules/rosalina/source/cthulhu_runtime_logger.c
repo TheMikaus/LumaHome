@@ -190,7 +190,7 @@ static void writeLifecycle(u32 pid, const char *state, Result result,
     char report[768];
     int n = sprintf(report,
         "LumaHome HOME hook lifecycle log\n"
-        "runtime_version=1.8.6\nmode=active-home-controller-v186\n"
+        "runtime_version=1.8.7\nmode=active-home-controller-v187\n"
         "pid=%lu\nstate=%s\nresult=%08lx\nmarker=%08lx\n"
         "heartbeat=%lu\npanel=%08lx\nframe_hook=%08lx\n"
         "expected_frame_hook=%08lx\nstub=%08lx\nrecoveries=%lu\n",
@@ -292,7 +292,7 @@ static void writeWatchdog(u32 pid, Result result, u32 marker, u32 heartbeat,
         stallSamples >= 3 ? "heartbeat-stalled" : "healthy";
     int n = sprintf(report,
         "LumaHome independent HOME watchdog\n"
-        "watchdog_version=1.8.6\nbase_overlay=V167\n"
+        "watchdog_version=1.8.7\nbase_overlay=V167\n"
         "state=%s\nresult=%08lx\n"
         "pid=%lu\npid_changes=%lu\nsamples=%lu\n"
         "marker=%08lx\nheartbeat=%lu\nprevious_heartbeat=%lu\n"
@@ -320,7 +320,7 @@ static void writeWatchdog(u32 pid, Result result, u32 marker, u32 heartbeat,
                      watchdogHomeMarkers[i], i, watchdogHomeHeartbeats[i]);
     IFile file;
     Result open = IFile_Open(&file, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/Cthulhu/watchdog-v186.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/Cthulhu/watchdog-v187.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE);
     if (R_SUCCEEDED(open))
     {
@@ -451,7 +451,7 @@ static void renderMenu(u8 *panel, u32 selection, bool reverse,
                        Result result, u32 mutations)
 {
     memset(panel, 0x20, CTH_PANEL_SIZE);
-    drawText(panel, 5, 8, "LUMAHOME 0.1 RC10", false);
+    drawText(panel, 5, 8, "LUMAHOME 0.1 RC11", false);
     drawText(panel, 5, 30, selection == 0 ? "> DIRECTION" : "  DIRECTION", selection == 0);
     drawText(panel, 5, 43, reverse ? "  Z-A" : "  A-Z", selection == 0);
     drawText(panel, 5, 64, selection == 1 ? "> FOLDER PLACEMENT" : "  FOLDER PLACEMENT", selection == 1);
@@ -500,8 +500,8 @@ static void writeSnapshot(u32 pid, volatile u32 *v, u32 held, u32 pressed,
     char report[1800];
     int n = sprintf(report,
         "LumaHome HOME OSD automatic runtime log\n"
-        "release=0.1.0-rc10\nruntime_version=1.8.6\n"
-        "mode=active-home-controller-v186\n"
+        "release=0.1.0-rc11\nruntime_version=1.8.7\n"
+        "mode=active-home-controller-v187\n"
         "pid=%lu\nmarker=%08lx\nmarker_ok=%u\n"
         "heartbeat=%lu\noverlay=%lu\nheld=%08lx\npressed=%08lx\n"
         "selection=%lu\ndirection=%s\nfolder_placement=%s\n"
