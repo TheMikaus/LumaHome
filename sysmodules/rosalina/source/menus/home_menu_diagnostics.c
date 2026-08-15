@@ -19,7 +19,7 @@
 #define CTH_LAUNCHER_TO_SD_DELTA (CTH_SD_RAW_ADDRESS - CTH_NAND_RAW_ADDRESS)
 #define CTH_REQUEST_MAGIC 0x53544843
 #define CTH_REQUEST_VERSION 3
-#define CTH_SORT_BUILD_VERSION "0.1.0-rc12"
+#define CTH_SORT_BUILD_VERSION "0.1.0-rc13"
 #define CTH_FRAMEWORK_BUILD_VERSION "0.7.7-multi-home"
 #define CTH_FOLDER_POSITION_OFFSET 0x11DC
 #define CTH_FOLDER_NAME_OFFSET 0x1560
@@ -2846,7 +2846,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     char *report = g_layoutBackrefReport;
     int length = sprintf(report,
         "LumaHome live icon map report\n"
-        "release=0.1.0-rc12\nscan_version=2.0.6\n"
+        "release=0.1.0-rc13\nscan_version=2.0.7\n"
         "raw=%08lx\nprocessed=%08lx\n"
         "wrapper=003827d8\nrebuild_subobject=003827e4\n",
         g_lastRawAddress, g_lastProcessedAddress);
@@ -3137,6 +3137,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
                 "index_indirect=%08lx\n", headerWords[0], headerWords[1],
                 headerWords[2], headerWords[3], indirectMap);
             volatile s16 *inlineMap = (volatile s16 *)(header + 0x0E);
+            bool inlineFolderChanged = false;
             if (g_livePlannedFolderCount > 0)
             {
                 s16 oldPosition = g_folderMutations[0].oldPosition;
@@ -3157,6 +3158,21 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
                     (unsigned long)occurrences, (unsigned long)isTitle,
                     (unsigned long)isFolderMember,
                     g_livePlannedFoldersFirst ? "before" : "after");
+                if (!g_liveProbeOnly && oldPosition != newPosition &&
+                    oldPosition >= 0 && oldPosition < 420 &&
+                    newPosition >= 0 && newPosition < 420 && candidate >= 0 &&
+                    occurrences == 1 && !isTitle && !isFolderMember)
+                {
+                    s16 displaced = inlineMap[newPosition];
+                    inlineMap[newPosition] = candidate;
+                    inlineMap[oldPosition] = displaced;
+                    inlineFolderChanged = true;
+                    length += sprintf(report + length,
+                        "folder_move_inline moved=1 displaced=%d\n", displaced);
+                }
+                else
+                    length += sprintf(report + length,
+                        "folder_move_inline moved=0\n");
             }
             length += sprintf(report + length, "non_title_inline=");
             u32 nonTitleInline = 0;
@@ -3241,9 +3257,9 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
                             (s16)g_liveInlineOrdered[i];
                         inlineChanged++;
                     }
-            g_liveMapChanged = inlineChanged != 0;
+            g_liveMapChanged = inlineFolderChanged || inlineChanged != 0;
             g_liveMapPartial = staleFolderMembers != 0;
-            if (inlineChanged != 0)
+            if (inlineFolderChanged || inlineChanged != 0)
             {
                 svcFlushProcessDataCache(CUR_PROCESS_HANDLE,
                     localWindow, 0x1000);
@@ -3269,6 +3285,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
             {
                 volatile s16 *indices = (volatile s16 *)(localWindow +
                     (indirectMap & 0xFFF));
+                bool indirectFolderChanged = false;
                 if (g_livePlannedFolderCount > 0)
                 {
                     s16 oldPosition = g_folderMutations[0].oldPosition;
@@ -3289,6 +3306,22 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
                         (unsigned long)occurrences, (unsigned long)isTitle,
                         (unsigned long)isFolderMember,
                         g_livePlannedFoldersFirst ? "before" : "after");
+                    if (!g_liveProbeOnly && oldPosition != newPosition &&
+                        oldPosition >= 0 && oldPosition < 420 &&
+                        newPosition >= 0 && newPosition < 420 && candidate >= 0 &&
+                        occurrences == 1 && !isTitle && !isFolderMember)
+                    {
+                        s16 displaced = indices[newPosition];
+                        indices[newPosition] = candidate;
+                        indices[oldPosition] = displaced;
+                        indirectFolderChanged = true;
+                        length += sprintf(report + length,
+                            "folder_move_indirect moved=1 displaced=%d\n",
+                            displaced);
+                    }
+                    else
+                        length += sprintf(report + length,
+                            "folder_move_indirect moved=0\n");
                 }
                 length += sprintf(report + length, "non_title_indirect=");
                 u32 nonTitleIndirect = 0;
@@ -3367,7 +3400,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
                                 (s16)g_liveIndirectOrdered[i];
                             indirectChanged++;
                         }
-                if (indirectChanged != 0)
+                if (indirectFolderChanged || indirectChanged != 0)
                 {
                     svcFlushProcessDataCache(CUR_PROCESS_HANDLE,
                         localWindow, 0x1000);
@@ -3387,7 +3420,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc12.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc13.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
