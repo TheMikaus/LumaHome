@@ -19,7 +19,7 @@
 #define CTH_LAUNCHER_TO_SD_DELTA (CTH_SD_RAW_ADDRESS - CTH_NAND_RAW_ADDRESS)
 #define CTH_REQUEST_MAGIC 0x53544843
 #define CTH_REQUEST_VERSION 3
-#define CTH_SORT_BUILD_VERSION "0.1.0-rc9"
+#define CTH_SORT_BUILD_VERSION "0.1.0-rc10"
 #define CTH_FRAMEWORK_BUILD_VERSION "0.7.7-multi-home"
 #define CTH_FOLDER_POSITION_OFFSET 0x11DC
 #define CTH_FOLDER_NAME_OFFSET 0x1560
@@ -2623,7 +2623,7 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
         if (R_SUCCEEDED(res) &&
             (firstTitlePosition >= CTH_LAYOUT_SLOTS || lastTitlePosition < 0))
             res = (Result)-103;
-        if (R_SUCCEEDED(res) && foldersFirst)
+        if (R_SUCCEEDED(res))
         {
             for (u32 i = 0; i < folderCount; i++)
                 if (g_folderMutations[i].oldPosition < 0 ||
@@ -2632,38 +2632,47 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
                     res = (Result)-107;
                     break;
                 }
-            /* Insert folders at the first usable title coordinate. Positions
-               below it may be HOME-reserved and are not valid insertion
-               targets. Shift titles forward to make non-colliding space. */
+        }
+        if (R_SUCCEEDED(res))
+        {
+            /* Repartition the coordinates already occupied by top-level
+               titles and folders.  This preserves every existing hole,
+               creates no new coordinates, and makes Before/After idempotent. */
+            static s16 occupied[CTH_LAYOUT_SLOTS];
+            static u16 topLevelIndexes[CTH_LAYOUT_SLOTS];
+            u32 occupiedCount = 0;
+            u32 topLevelCount = 0;
             for (u32 i = 0; i < mutationCount; i++)
             {
                 if (g_sortMutations[i].folder != -1)
                     continue;
-                s32 shifted = (s32)g_sortMutations[i].newPosition +
-                              (s32)folderCount;
-                if (shifted >= CTH_LAYOUT_SLOTS)
+                occupied[occupiedCount++] = g_sortMutations[i].oldPosition;
+                topLevelIndexes[topLevelCount++] = (u16)i;
+            }
+            for (u32 i = 0; i < folderCount; i++)
+                occupied[occupiedCount++] = g_folderMutations[i].oldPosition;
+            SortPositions(occupied, occupiedCount);
+            for (u32 i = 1; i < occupiedCount; i++)
+                if (occupied[i] == occupied[i - 1])
                 {
-                    res = (Result)-105;
+                    res = (Result)-108;
                     break;
                 }
-                g_sortMutations[i].newPosition = (s16)shifted;
-            }
-            if (R_SUCCEEDED(res))
-                lastTitlePosition += (s16)folderCount;
-        }
-        for (u32 i = 0; R_SUCCEEDED(res) && i < folderCount; i++)
-        {
-            s16 target = foldersFirst ? firstTitlePosition + i :
-                         lastTitlePosition + 1 + i;
-            if (target < 0 || target >= CTH_LAYOUT_SLOTS)
+            if (occupiedCount != topLevelCount + folderCount)
+                res = (Result)-109;
+            u32 titleBase = foldersFirst ? folderCount : 0;
+            u32 folderBase = foldersFirst ? 0 : topLevelCount;
+            for (u32 i = 0; R_SUCCEEDED(res) && i < topLevelCount; i++)
+                g_sortMutations[topLevelIndexes[i]].newPosition =
+                    occupied[titleBase + i];
+            for (u32 i = 0; R_SUCCEEDED(res) && i < folderCount; i++)
             {
-                res = (Result)-104;
-                break;
+                u8 id = folderIds[i];
+                for (u32 j = 0; j < folderCount; j++)
+                    if (g_folderMutations[j].id == id)
+                        g_folderMutations[j].newPosition =
+                            occupied[folderBase + i];
             }
-            u8 id = folderIds[i];
-            for (u32 j = 0; j < folderCount; j++)
-                if (g_folderMutations[j].id == id)
-                    g_folderMutations[j].newPosition = target;
         }
         for (u32 i = 0; R_SUCCEEDED(res) && i < mutationCount; i++)
             memcpy(g_sortRaw + 0xCB0 + g_sortMutations[i].slot * 2,
@@ -2832,7 +2841,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     char *report = g_layoutBackrefReport;
     int length = sprintf(report,
         "LumaHome live icon map report\n"
-        "release=0.1.0-rc9\nscan_version=2.0.3\n"
+        "release=0.1.0-rc10\nscan_version=2.0.4\n"
         "raw=%08lx\nprocessed=%08lx\n"
         "wrapper=003827d8\nrebuild_subobject=003827e4\n",
         g_lastRawAddress, g_lastProcessedAddress);
@@ -3284,7 +3293,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc9.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc10.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
