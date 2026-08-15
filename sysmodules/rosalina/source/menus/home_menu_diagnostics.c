@@ -19,7 +19,7 @@
 #define CTH_LAUNCHER_TO_SD_DELTA (CTH_SD_RAW_ADDRESS - CTH_NAND_RAW_ADDRESS)
 #define CTH_REQUEST_MAGIC 0x53544843
 #define CTH_REQUEST_VERSION 3
-#define CTH_SORT_BUILD_VERSION "0.1.0-rc8"
+#define CTH_SORT_BUILD_VERSION "0.1.0-rc9"
 #define CTH_FRAMEWORK_BUILD_VERSION "0.7.7-multi-home"
 #define CTH_FOLDER_POSITION_OFFSET 0x11DC
 #define CTH_FOLDER_NAME_OFFSET 0x1560
@@ -2490,7 +2490,30 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
     if (R_SUCCEEDED(res) && !ValidateLayout(g_launcherRaw, true, &launcherUsed))
         res = (Result)-43;
     if (R_SUCCEEDED(res))
+    {
+        /* HOME's resident Launcher object can deliberately carry -1 for a
+           folder position even though Launcher.dat has the authoritative
+           coordinate.  Prefer a validated read-only file snapshot for
+           planning.  Keep the resident image as a safe fallback when HOME
+           has the archive locked. */
         memcpy(g_launcherOriginal, g_launcherRaw, CTH_LAUNCHER_SIZE);
+        Result launcherFileResult = ReadCurrentLauncherData();
+        u16 launcherFileUsed = 0;
+        bool launcherFileValid = R_SUCCEEDED(launcherFileResult) &&
+            ValidateLayout(g_launcherRaw, true, &launcherFileUsed);
+        if (!launcherFileValid)
+            memcpy(g_launcherRaw, g_launcherOriginal, CTH_LAUNCHER_SIZE);
+        else
+        {
+            launcherUsed = launcherFileUsed;
+            memcpy(g_launcherOriginal, g_launcherRaw, CTH_LAUNCHER_SIZE);
+        }
+        g_sortDetailsLength += sprintf(g_sortDetails + g_sortDetailsLength,
+            "[LAUNCHER_SOURCE]\nfile_result=%08lx file_valid=%lu "
+            "source=%s folders=%u\n\n", launcherFileResult,
+            launcherFileValid ? 1UL : 0UL,
+            launcherFileValid ? "file" : "resident", launcherUsed);
+    }
 
     u32 mutationCount = 0;
     if (R_SUCCEEDED(res))
@@ -2588,9 +2611,10 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
             folderIds[folderCount] = (u8)folder;
             g_folderMutations[folderCount].id = (u8)folder;
             g_folderMutations[folderCount].number = number;
-            /* The live position is stale after HOME drag operations.  The
-             * shutdown writer verifies identity against the real file. */
-            g_folderMutations[folderCount].oldPosition = -1;
+            /* When the read-only Launcher.dat snapshot was available this is
+               the authoritative source coordinate.  The live grid updater
+               must not invent insertion space without one. */
+            g_folderMutations[folderCount].oldPosition = position;
             g_folderMutations[folderCount].newPosition = position;
             folderCount++;
         }
@@ -2601,6 +2625,13 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
             res = (Result)-103;
         if (R_SUCCEEDED(res) && foldersFirst)
         {
+            for (u32 i = 0; i < folderCount; i++)
+                if (g_folderMutations[i].oldPosition < 0 ||
+                    g_folderMutations[i].oldPosition >= CTH_LAYOUT_SLOTS)
+                {
+                    res = (Result)-107;
+                    break;
+                }
             /* Insert folders at the first usable title coordinate. Positions
                below it may be HOME-reserved and are not valid insertion
                targets. Shift titles forward to make non-colliding space. */
@@ -2801,7 +2832,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     char *report = g_layoutBackrefReport;
     int length = sprintf(report,
         "LumaHome live icon map report\n"
-        "release=0.1.0-rc8\nscan_version=2.0.2\n"
+        "release=0.1.0-rc9\nscan_version=2.0.3\n"
         "raw=%08lx\nprocessed=%08lx\n"
         "wrapper=003827d8\nrebuild_subobject=003827e4\n",
         g_lastRawAddress, g_lastProcessedAddress);
@@ -3253,7 +3284,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc8.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc9.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
