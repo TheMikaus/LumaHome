@@ -19,7 +19,8 @@
 #define CTH_LAUNCHER_TO_SD_DELTA (CTH_SD_RAW_ADDRESS - CTH_NAND_RAW_ADDRESS)
 #define CTH_REQUEST_MAGIC 0x53544843
 #define CTH_REQUEST_VERSION 3
-#define CTH_SORT_BUILD_VERSION "0.1.0-rc13"
+#define CTH_SORT_BUILD_VERSION "0.1.0-rc14"
+#define CTH_INLINE_FOLDER_RECORD_RECOVERY_HINT 190
 #define CTH_FRAMEWORK_BUILD_VERSION "0.7.7-multi-home"
 #define CTH_FOLDER_POSITION_OFFSET 0x11DC
 #define CTH_FOLDER_NAME_OFFSET 0x1560
@@ -2846,7 +2847,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     char *report = g_layoutBackrefReport;
     int length = sprintf(report,
         "LumaHome live icon map report\n"
-        "release=0.1.0-rc13\nscan_version=2.0.7\n"
+        "release=0.1.0-rc14\nscan_version=2.0.8\n"
         "raw=%08lx\nprocessed=%08lx\n"
         "wrapper=003827d8\nrebuild_subobject=003827e4\n",
         g_lastRawAddress, g_lastProcessedAddress);
@@ -3142,8 +3143,9 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
             {
                 s16 oldPosition = g_folderMutations[0].oldPosition;
                 s16 newPosition = g_folderMutations[0].newPosition;
-                s16 candidate = oldPosition >= 0 && oldPosition < 420 ?
-                    inlineMap[oldPosition] : -1;
+                s16 sourcePosition = oldPosition;
+                s16 candidate = sourcePosition >= 0 && sourcePosition < 420 ?
+                    inlineMap[sourcePosition] : -1;
                 u32 occurrences = 0, isTitle = 0, isFolderMember = 0;
                 for (u32 i = 0; i < 420; i++)
                     if (inlineMap[i] == candidate) occurrences++;
@@ -3151,21 +3153,44 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
                     if (candidate == (s16)g_liveTopLevelRecords[i]) isTitle = 1;
                 for (u32 i = 0; i < folderRecordCount; i++)
                     if (candidate == (s16)g_liveFolderRecords[i]) isFolderMember = 1;
+                bool usedRecoveryHint = false;
+                if (oldPosition == newPosition && isTitle)
+                {
+                    s16 hintPosition = -1;
+                    u32 hintOccurrences = 0;
+                    for (u32 i = 0; i < 420; i++)
+                        if (inlineMap[i] == CTH_INLINE_FOLDER_RECORD_RECOVERY_HINT)
+                        {
+                            hintPosition = (s16)i;
+                            hintOccurrences++;
+                        }
+                    if (hintOccurrences == 1)
+                    {
+                        sourcePosition = hintPosition;
+                        candidate = CTH_INLINE_FOLDER_RECORD_RECOVERY_HINT;
+                        occurrences = 1;
+                        isTitle = 0;
+                        isFolderMember = 0;
+                        usedRecoveryHint = true;
+                    }
+                }
                 length += sprintf(report + length,
-                    "folder_probe_inline old=%d new=%d record=%d occurrences=%lu "
-                    "top_title=%lu folder_member=%lu placement=%s\n",
-                    oldPosition, newPosition, candidate,
+                    "folder_probe_inline old=%d source=%d new=%d record=%d "
+                    "occurrences=%lu top_title=%lu folder_member=%lu "
+                    "recovery_hint=%lu placement=%s\n",
+                    oldPosition, sourcePosition, newPosition, candidate,
                     (unsigned long)occurrences, (unsigned long)isTitle,
                     (unsigned long)isFolderMember,
+                    usedRecoveryHint ? 1UL : 0UL,
                     g_livePlannedFoldersFirst ? "before" : "after");
-                if (!g_liveProbeOnly && oldPosition != newPosition &&
-                    oldPosition >= 0 && oldPosition < 420 &&
+                if (!g_liveProbeOnly && sourcePosition != newPosition &&
+                    sourcePosition >= 0 && sourcePosition < 420 &&
                     newPosition >= 0 && newPosition < 420 && candidate >= 0 &&
                     occurrences == 1 && !isTitle && !isFolderMember)
                 {
                     s16 displaced = inlineMap[newPosition];
                     inlineMap[newPosition] = candidate;
-                    inlineMap[oldPosition] = displaced;
+                    inlineMap[sourcePosition] = displaced;
                     inlineFolderChanged = true;
                     length += sprintf(report + length,
                         "folder_move_inline moved=1 displaced=%d\n", displaced);
@@ -3420,7 +3445,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc13.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc14.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
