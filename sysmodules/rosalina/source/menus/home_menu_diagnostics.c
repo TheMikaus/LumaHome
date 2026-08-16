@@ -19,7 +19,7 @@
 #define CTH_LAUNCHER_TO_SD_DELTA (CTH_SD_RAW_ADDRESS - CTH_NAND_RAW_ADDRESS)
 #define CTH_REQUEST_MAGIC 0x53544843
 #define CTH_REQUEST_VERSION 3
-#define CTH_SORT_BUILD_VERSION "0.1.0-rc21"
+#define CTH_SORT_BUILD_VERSION "0.1.0-rc22"
 #define CTH_INLINE_FOLDER_RECORD_RECOVERY_HINT 190
 #define CTH_FRAMEWORK_BUILD_VERSION "0.7.7-multi-home"
 #define CTH_FOLDER_POSITION_OFFSET 0x11DC
@@ -1220,6 +1220,7 @@ static Result DisarmFolderPlan(void)
 }
 
 static Result WriteSdSaveData(void);
+static Result ReadSdSaveData(void);
 
 static Result ArmPendingSortCommit(void)
 {
@@ -1266,6 +1267,72 @@ static Result DisarmPendingSortCommit(void)
     if (R_FAILED(res)) return res;
     res = IFile_SetSize(&file, 0);
     IFile_Close(&file);
+    return res;
+}
+
+static Result MergePendingSortWithCurrent(void)
+{
+    memcpy(g_sortCommitted, g_sortRaw, sizeof(g_sortCommitted));
+    Result res = ReadSdSaveData();
+    u32 matched = 0, membershipChanges = 0, positionWrites = 0;
+    if (R_SUCCEEDED(res))
+    {
+        for (u32 desiredSlot = 0; desiredSlot < CTH_LAYOUT_SLOTS; desiredSlot++)
+        {
+            u64 titleId = ReadU64(g_sortCommitted, 8 + desiredSlot * 8);
+            if (!LooksLikeTitleId(titleId)) continue;
+            s32 currentSlot = -1;
+            u32 occurrences = 0;
+            for (u32 slot = 0; slot < CTH_LAYOUT_SLOTS; slot++)
+                if (ReadU64(g_sortRaw, 8 + slot * 8) == titleId)
+                { currentSlot = (s32)slot; occurrences++; }
+            if (occurrences != 1) { res = (Result)-115; break; }
+            matched++;
+            s8 desiredFolder = *(s8 *)(g_sortCommitted + 0xF80 + desiredSlot);
+            s8 currentFolder = *(s8 *)(g_sortRaw + 0xF80 + currentSlot);
+            if (desiredFolder != currentFolder) membershipChanges++;
+        }
+    }
+    /* A manual folder edit can shift every coordinate in both affected
+       groups. In that case HOME's current file is authoritative as a whole.
+       Otherwise merge only sorted positions into the current file, retaining
+       package/unwrapped state and all unrelated bytes. */
+    if (R_SUCCEEDED(res) && membershipChanges == 0)
+        for (u32 desiredSlot = 0; desiredSlot < CTH_LAYOUT_SLOTS; desiredSlot++)
+        {
+            u64 titleId = ReadU64(g_sortCommitted, 8 + desiredSlot * 8);
+            if (!LooksLikeTitleId(titleId)) continue;
+            for (u32 slot = 0; slot < CTH_LAYOUT_SLOTS; slot++)
+                if (ReadU64(g_sortRaw, 8 + slot * 8) == titleId)
+                {
+                    memcpy(g_sortRaw + 0xCB0 + slot * 2,
+                           g_sortCommitted + 0xCB0 + desiredSlot * 2, 2);
+                    positionWrites++;
+                    break;
+                }
+        }
+    if (R_SUCCEEDED(res)) res = WriteSdSaveData();
+    char report[512];
+    int length = sprintf(report,
+        "LumaHome shutdown merge report\n"
+        "sorter_version=" CTH_SORT_BUILD_VERSION "\n"
+        "matched=%lu\nmembership_changes=%lu\nposition_writes=%lu\n"
+        "mode=%s\nresult=%08lx\n",
+        (unsigned long)matched, (unsigned long)membershipChanges,
+        (unsigned long)positionWrites,
+        membershipChanges ? "preserve-current-layout" : "merge-positions-only",
+        res);
+    IFile file = {0};
+    if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC,
+        fsMakePath(PATH_EMPTY, ""),
+        fsMakePath(PATH_ASCII, "/3ds/Cthulhu/shutdown-merge.txt"),
+        FS_OPEN_CREATE | FS_OPEN_WRITE)))
+    {
+        u64 written = 0;
+        IFile_Write(&file, &written, report, length, FS_WRITE_FLUSH);
+        IFile_SetSize(&file, length);
+        IFile_Close(&file);
+    }
     return res;
 }
 
@@ -1520,7 +1587,7 @@ void CthulhuHomeMenu_HandleShutdownNotification(u32 notificationId)
                              g_folderPlan.count > 0;
         WriteSortJournal("shutdown-sort-delay", (Result)-1);
         svcSleepThread(1500 * 1000 * 1000LL);
-        pendingResult = WriteSdSaveData();
+        pendingResult = MergePendingSortWithCurrent();
         if (R_SUCCEEDED(pendingResult) && hasFolderPlan)
             pendingResult = ReadCurrentLauncherData();
         if (R_SUCCEEDED(pendingResult) && hasFolderPlan)
@@ -2975,7 +3042,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     char *report = g_layoutBackrefReport;
     int length = sprintf(report,
         "LumaHome live icon map report\n"
-        "release=0.1.0-rc21\nscan_version=2.2.0\n"
+        "release=0.1.0-rc22\nscan_version=2.2.1\n"
         "raw=%08lx\nprocessed=%08lx\n"
         "wrapper=003827d8\nrebuild_subobject=003827e4\n",
         g_lastRawAddress, g_lastProcessedAddress);
@@ -3592,7 +3659,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc21.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc22.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
