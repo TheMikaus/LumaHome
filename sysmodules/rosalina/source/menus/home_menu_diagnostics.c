@@ -19,7 +19,7 @@
 #define CTH_LAUNCHER_TO_SD_DELTA (CTH_SD_RAW_ADDRESS - CTH_NAND_RAW_ADDRESS)
 #define CTH_REQUEST_MAGIC 0x53544843
 #define CTH_REQUEST_VERSION 3
-#define CTH_SORT_BUILD_VERSION "0.1.0-rc14"
+#define CTH_SORT_BUILD_VERSION "0.1.0-rc15"
 #define CTH_INLINE_FOLDER_RECORD_RECOVERY_HINT 190
 #define CTH_FRAMEWORK_BUILD_VERSION "0.7.7-multi-home"
 #define CTH_FOLDER_POSITION_OFFSET 0x11DC
@@ -1377,10 +1377,11 @@ static Result WriteLauncherFolderPositions(void)
             res = FSFILE_Read(file, &transferred, numberOffset,
                               &currentNumber, 4);
         if (R_SUCCEEDED(res) && transferred != 4) res = (Result)-99;
-        if (R_SUCCEEDED(res) &&
-            ((folder->oldPosition >= 0 &&
-              currentPosition != folder->oldPosition) ||
-             currentNumber != folder->number))
+        /* HOME may update or invalidate the position before the shutdown
+           notification reaches Rosalina. Folder number is the stable
+           identity; requiring the old coordinate caused valid targeted
+           repairs to fail with -97. */
+        if (R_SUCCEEDED(res) && currentNumber != folder->number)
             res = (Result)-97;
         if (R_SUCCEEDED(res))
             res = FSFILE_Write(file, &transferred, positionOffset,
@@ -2607,11 +2608,6 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
             memcpy(&number, g_launcherRaw + CTH_FOLDER_NUMBER_OFFSET + folder * 4, 4);
             if (number == 0)
                 continue;
-            if (position < 0 || position >= CTH_LAYOUT_SLOTS)
-            {
-                res = (Result)-44;
-                break;
-            }
             folderIds[folderCount] = (u8)folder;
             g_folderMutations[folderCount].id = (u8)folder;
             g_folderMutations[folderCount].number = number;
@@ -2629,7 +2625,38 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
         if (R_SUCCEEDED(res) &&
             (firstTitlePosition >= CTH_LAYOUT_SLOTS || lastTitlePosition < 0))
             res = (Result)-103;
-        if (R_SUCCEEDED(res))
+        u32 missingFolderCount = 0;
+        for (u32 i = 0; i < folderCount; i++)
+            if (g_folderMutations[i].oldPosition < 0 ||
+                g_folderMutations[i].oldPosition >= CTH_LAYOUT_SLOTS)
+                missingFolderCount++;
+        if (R_SUCCEEDED(res) && missingFolderCount != 0)
+        {
+            /* Recovery for a folder whose Launcher number survived but whose
+               position was invalidated. Use only currently free space just
+               outside the title range; do not shift or rewrite title slots. */
+            s32 base = foldersFirst ?
+                (s32)firstTitlePosition - (s32)folderCount :
+                (s32)lastTitlePosition + 1;
+            if (base < 13 || base + (s32)folderCount > CTH_LAYOUT_SLOTS)
+                res = (Result)-110;
+            for (u32 i = 0; R_SUCCEEDED(res) && i < folderCount; i++)
+            {
+                s16 target = (s16)(base + i);
+                for (u32 title = 0; title < mutationCount; title++)
+                    if (g_sortMutations[title].folder == -1 &&
+                        g_sortMutations[title].oldPosition == target)
+                    {
+                        res = (Result)-111;
+                        break;
+                    }
+                u8 id = folderIds[i];
+                for (u32 j = 0; R_SUCCEEDED(res) && j < folderCount; j++)
+                    if (g_folderMutations[j].id == id)
+                        g_folderMutations[j].newPosition = target;
+            }
+        }
+        else if (R_SUCCEEDED(res))
         {
             for (u32 i = 0; i < folderCount; i++)
                 if (g_folderMutations[i].oldPosition < 0 ||
@@ -2638,9 +2665,6 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
                     res = (Result)-107;
                     break;
                 }
-        }
-        if (R_SUCCEEDED(res))
-        {
             /* Repartition the coordinates already occupied by top-level
                titles and folders.  This preserves every existing hole,
                creates no new coordinates, and makes Before/After idempotent. */
@@ -2847,7 +2871,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     char *report = g_layoutBackrefReport;
     int length = sprintf(report,
         "LumaHome live icon map report\n"
-        "release=0.1.0-rc14\nscan_version=2.0.8\n"
+        "release=0.1.0-rc15\nscan_version=2.0.9\n"
         "raw=%08lx\nprocessed=%08lx\n"
         "wrapper=003827d8\nrebuild_subobject=003827e4\n",
         g_lastRawAddress, g_lastProcessedAddress);
@@ -3445,7 +3469,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc14.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc15.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
