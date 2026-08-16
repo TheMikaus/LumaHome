@@ -19,7 +19,7 @@
 #define CTH_LAUNCHER_TO_SD_DELTA (CTH_SD_RAW_ADDRESS - CTH_NAND_RAW_ADDRESS)
 #define CTH_REQUEST_MAGIC 0x53544843
 #define CTH_REQUEST_VERSION 3
-#define CTH_SORT_BUILD_VERSION "0.1.0-rc22"
+#define CTH_SORT_BUILD_VERSION "0.1.0-rc23"
 #define CTH_INLINE_FOLDER_RECORD_RECOVERY_HINT 190
 #define CTH_FRAMEWORK_BUILD_VERSION "0.7.7-multi-home"
 #define CTH_FOLDER_POSITION_OFFSET 0x11DC
@@ -58,7 +58,17 @@ typedef struct
     s16 oldPosition;
     s16 newPosition;
     s8 folder;
+    u8 mediaType;
 } CthSdMutation;
+
+typedef struct
+{
+    u16 slot;
+    u16 reserved;
+    u64 titleId;
+    s16 oldPosition;
+    s16 newPosition;
+} CthLauncherTitleMutation;
 
 typedef struct
 {
@@ -78,11 +88,14 @@ typedef struct
     u16 reserved;
     u32 launcherAddress;
     CthFolderMutation folders[CTH_FOLDER_COUNT];
+    u16 titleCount;
+    u16 titleReserved;
+    CthLauncherTitleMutation titles[16];
 } CthFolderPlan;
 #pragma pack(pop)
 
 #define CTH_FOLDER_PLAN_MAGIC 0x50464843
-#define CTH_FOLDER_PLAN_VERSION 2
+#define CTH_FOLDER_PLAN_VERSION 3
 
 typedef struct
 {
@@ -1157,7 +1170,8 @@ static void WriteSortJournal(const char *stage, Result result)
 }
 
 static Result __attribute__((unused))
-WriteFolderPlan(u16 algorithm, u32 folderCount, u32 launcherAddress)
+WriteFolderPlan(u16 algorithm, u32 folderCount, u32 launcherAddress,
+                u32 mutationCount)
 {
     memset(&g_folderPlan, 0, sizeof(g_folderPlan));
     g_folderPlan.magic = CTH_FOLDER_PLAN_MAGIC;
@@ -1167,6 +1181,18 @@ WriteFolderPlan(u16 algorithm, u32 folderCount, u32 launcherAddress)
     g_folderPlan.launcherAddress = launcherAddress;
     memcpy(g_folderPlan.folders, g_folderMutations,
            folderCount * sizeof(CthFolderMutation));
+    for (u32 i = 0; i < mutationCount && g_folderPlan.titleCount < 16; i++)
+        if (g_sortMutations[i].mediaType == 0 &&
+            g_sortMutations[i].slot < CTH_LAYOUT_SLOTS)
+        {
+            CthLauncherTitleMutation *title =
+                &g_folderPlan.titles[g_folderPlan.titleCount++];
+            title->slot = g_sortMutations[i].slot;
+            title->titleId = ReadU64(g_launcherRaw,
+                                     8 + title->slot * sizeof(u64));
+            title->oldPosition = g_sortMutations[i].oldPosition;
+            title->newPosition = g_sortMutations[i].newPosition;
+        }
     IFile file = {0};
     Result res = IFile_Open(&file, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, ""),
         fsMakePath(PATH_ASCII, "/3ds/Cthulhu/pending-folder-plan.bin"),
@@ -1198,7 +1224,7 @@ static Result __attribute__((unused)) ReadFolderPlan(void)
     if (R_SUCCEEDED(res) &&
         (g_folderPlan.magic != CTH_FOLDER_PLAN_MAGIC ||
          g_folderPlan.version != CTH_FOLDER_PLAN_VERSION ||
-         g_folderPlan.count > CTH_FOLDER_COUNT))
+         g_folderPlan.count > CTH_FOLDER_COUNT || g_folderPlan.titleCount > 16))
         res = (Result)-63;
     return res;
 }
@@ -1465,6 +1491,31 @@ static Result WriteLauncherFolderPositions(void)
             res = (Result)-101;
         if (R_SUCCEEDED(res)) verified++;
     }
+    for (u32 i = 0; R_SUCCEEDED(res) && i < g_folderPlan.titleCount; i++)
+    {
+        CthLauncherTitleMutation *title = &g_folderPlan.titles[i];
+        u64 idOffset = 8 + title->slot * sizeof(u64);
+        u64 positionOffset = 0xD9A + title->slot * 2;
+        u64 currentId = 0;
+        s16 readbackPosition = -1;
+        u32 transferred = 0;
+        res = FSFILE_Read(file, &transferred, idOffset, &currentId, 8);
+        if (R_SUCCEEDED(res) &&
+            (transferred != 8 || currentId != title->titleId))
+            res = (Result)-116;
+        if (R_SUCCEEDED(res))
+            res = FSFILE_Write(file, &transferred, positionOffset,
+                               &title->newPosition, 2, FS_WRITE_FLUSH);
+        if (R_SUCCEEDED(res) && transferred != 2) res = (Result)-117;
+        if (R_SUCCEEDED(res)) writes++;
+        if (R_SUCCEEDED(res))
+            res = FSFILE_Read(file, &transferred, positionOffset,
+                              &readbackPosition, 2);
+        if (R_SUCCEEDED(res) &&
+            (transferred != 2 || readbackPosition != title->newPosition))
+            res = (Result)-118;
+        if (R_SUCCEEDED(res)) verified++;
+    }
     Result closeFile = file ? FSFILE_Close(file) : (Result)-1;
     Result control = (Result)-1;
     if (R_SUCCEEDED(res) && R_FAILED(closeFile)) res = closeFile;
@@ -1480,10 +1531,11 @@ static Result WriteLauncherFolderPositions(void)
     int length = sprintf(report,
         "Cthulhu targeted folder commit report\n"
         "sorter_version=" CTH_SORT_BUILD_VERSION "\n"
-        "open_archive=%08lx\nopen_file=%08lx\nplanned=%u\n"
+        "open_archive=%08lx\nopen_file=%08lx\nfolders=%u\ntitles=%u\n"
         "writes=%lu\nverified=%lu\nclose_file=%08lx\ncontrol=%08lx\n"
         "close_archive=%08lx\nresult=%08lx\n",
-        openArchive, openFile, g_folderPlan.count, (unsigned long)writes,
+        openArchive, openFile, g_folderPlan.count, g_folderPlan.titleCount,
+        (unsigned long)writes,
         (unsigned long)verified, closeFile, control, closeArchive, res);
     IFile reportFile = {0};
     if (R_SUCCEEDED(IFile_Open(&reportFile, ARCHIVE_SDMC,
@@ -1823,7 +1875,7 @@ static Result SaveCommittedSnapshot(void)
     return res;
 }
 
-static int FindRawTitleSlot(const u8 *raw, u64 titleId, u16 *slotOut,
+static int FindRawTitleSlot(const u8 *raw, bool nand, u64 titleId, u16 *slotOut,
                             s16 *positionOut, s8 *folderOut)
 {
     int found = 0;
@@ -1833,8 +1885,8 @@ static int FindRawTitleSlot(const u8 *raw, u64 titleId, u16 *slotOut,
             continue;
         found++;
         *slotOut = (u16)slot;
-        *positionOut = ReadS16(raw, 0xCB0 + slot * 2);
-        *folderOut = *(const s8 *)(raw + 0xF80 + slot);
+        *positionOut = ReadS16(raw, (nand ? 0xD9A : 0xCB0) + slot * 2);
+        *folderOut = *(const s8 *)(raw + (nand ? 0x106A : 0xF80) + slot);
     }
     return found;
 }
@@ -2492,6 +2544,27 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
                 entries[i].title[c] = (u8)alias[c];
             entries[i].flags |= 1;
         }
+    static const struct { u64 id; const char *name; } dsiAliases[] = {
+        {0x0004800023232323ULL, "TWiLight Menu++ Game Booter"},
+        {0x0004800453524C41ULL, "TWiLight Menu++"},
+    };
+    for (u32 alias = 0; alias < sizeof(dsiAliases) / sizeof(dsiAliases[0]); alias++)
+    {
+        bool present = false;
+        for (u32 i = 0; i < header->entryCount; i++)
+            if (entries[i].titleId == dsiAliases[alias].id)
+                present = true;
+        if (!present && header->entryCount < 900)
+        {
+            CthRequestEntry *entry = &entries[header->entryCount++];
+            memset(entry, 0, sizeof(*entry));
+            entry->titleId = dsiAliases[alias].id;
+            entry->mediaType = 0;
+            entry->flags = 1;
+            for (u32 c = 0; dsiAliases[alias].name[c] != 0 && c < 63; c++)
+                entry->title[c] = (u8)dsiAliases[alias].name[c];
+        }
+    }
     if (selectedAlgorithm == 1 || selectedAlgorithm == 2 || selectedAlgorithm == 6)
         header->algorithm = selectedAlgorithm;
     SortRequestEntries(entries, header->entryCount, header->algorithm);
@@ -2657,12 +2730,15 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
     {
         for (u32 i = 0; i < header->entryCount; i++)
         {
-            if (entries[i].mediaType != 1)
+            bool nand = entries[i].mediaType == 0;
+            if (nand && entries[i].titleId != 0x0004800023232323ULL &&
+                entries[i].titleId != 0x0004800453524C41ULL)
                 continue;
             u16 slot = 0;
             s16 position = -1;
             s8 folder = -1;
-            int matches = FindRawTitleSlot(g_sortRaw, entries[i].titleId,
+            int matches = FindRawTitleSlot(nand ? g_launcherRaw : g_sortRaw,
+                                           nand, entries[i].titleId,
                                            &slot, &position, &folder);
             if (matches > 1)
             {
@@ -2676,6 +2752,7 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
                 g_sortMutations[mutationCount].slot = slot;
                 g_sortMutations[mutationCount].oldPosition = position;
                 g_sortMutations[mutationCount].folder = folder;
+                g_sortMutations[mutationCount].mediaType = entries[i].mediaType;
                 g_sortMutations[mutationCount].newPosition = position;
                 mutationCount++;
             }
@@ -2717,7 +2794,9 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
                 mutation->newPosition = collapseGaps ?
                     CompactTraversalPosition(i, groupCount, compactOrigin, rows,
                                              rowMajor) : positions[i];
-                memcpy(g_sortRaw + 0xCB0 + mutation->slot * 2,
+                u8 *target = mutation->mediaType == 0 ? g_launcherRaw : g_sortRaw;
+                u32 offset = mutation->mediaType == 0 ? 0xD9A : 0xCB0;
+                memcpy(target + offset + mutation->slot * 2,
                        &mutation->newPosition, sizeof(s16));
             }
         }
@@ -2876,14 +2955,31 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
             }
         }
         for (u32 i = 0; R_SUCCEEDED(res) && i < mutationCount; i++)
-            memcpy(g_sortRaw + 0xCB0 + g_sortMutations[i].slot * 2,
+        {
+            u8 *target = g_sortMutations[i].mediaType == 0 ?
+                         g_launcherRaw : g_sortRaw;
+            u32 offset = g_sortMutations[i].mediaType == 0 ? 0xD9A : 0xCB0;
+            memcpy(target + offset + g_sortMutations[i].slot * 2,
                    &g_sortMutations[i].newPosition, 2);
+        }
         for (u32 i = 0; R_SUCCEEDED(res) && i < folderCount; i++)
             memcpy(g_launcherRaw + CTH_FOLDER_POSITION_OFFSET +
                    g_folderMutations[i].id * 2,
                    &g_folderMutations[i].newPosition, 2);
         if (R_SUCCEEDED(res) && !BuildSdGridFromRaw(g_sortRaw, g_sortGrid))
             res = (Result)-46;
+        for (u32 i = 0; R_SUCCEEDED(res) && i < mutationCount; i++)
+            if (g_sortMutations[i].mediaType == 0)
+            {
+                s16 position = g_sortMutations[i].newPosition;
+                u64 titleId = ReadU64(g_launcherRaw,
+                    8 + g_sortMutations[i].slot * sizeof(u64));
+                if (position < 0 || position >= CTH_LAYOUT_SLOTS ||
+                    g_sortGrid[position] != UINT64_MAX)
+                    res = (Result)-119;
+                else
+                    g_sortGrid[position] = titleId;
+            }
     }
 
     g_sortDetailsLength += sprintf(g_sortDetails + g_sortDetailsLength,
@@ -2899,11 +2995,14 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
                                    "\n[TITLES]\n");
     for (u32 i = 0; i < mutationCount; i++)
     {
-        u64 titleId = ReadU64(g_sortRaw, 8 + g_sortMutations[i].slot * 8);
+        const u8 *source = g_sortMutations[i].mediaType == 0 ?
+                           g_launcherRaw : g_sortRaw;
+        u64 titleId = ReadU64(source, 8 + g_sortMutations[i].slot * 8);
         char title[65] = {0};
         for (u32 request = 0; request < header->entryCount; request++)
         {
-            if (entries[request].titleId != titleId || entries[request].mediaType != 1)
+            if (entries[request].titleId != titleId ||
+                entries[request].mediaType != g_sortMutations[i].mediaType)
                 continue;
             for (u32 c = 0; c < 64 && entries[request].title[c] != 0; c++)
             {
@@ -2961,7 +3060,8 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
             res = ArmPendingSortCommit();
     }
     if (R_SUCCEEDED(res) && stageFolders)
-        res = WriteFolderPlan(header->algorithm, folderCount, launcherAddress);
+        res = WriteFolderPlan(header->algorithm, folderCount, launcherAddress,
+                              mutationCount);
     if (R_FAILED(res) && stageFolders)
     {
         (void)DisarmPendingSortCommit();
@@ -2999,6 +3099,18 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
             }
             liveFolderWrites++;
         }
+        for (u32 i = 0; R_SUCCEEDED(res) && i < mutationCount; i++)
+            if (g_sortMutations[i].mediaType == 0)
+            {
+                u32 offset = 0xD9A - 8 + g_sortMutations[i].slot * 2;
+                volatile s16 *livePosition =
+                    (volatile s16 *)(launcherAddress + offset);
+                *livePosition = g_sortMutations[i].newPosition;
+                if (*livePosition != g_sortMutations[i].newPosition)
+                    res = (Result)-120;
+                else
+                    liveFolderWrites++;
+            }
         svcFlushProcessDataCache(process, rawAddress, sizeof(g_sortRaw));
         svcFlushProcessDataCache(process, processedAddress, sizeof(g_sortGrid));
         if (liveFolderWrites != 0)
@@ -3042,7 +3154,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     char *report = g_layoutBackrefReport;
     int length = sprintf(report,
         "LumaHome live icon map report\n"
-        "release=0.1.0-rc22\nscan_version=2.2.1\n"
+        "release=0.1.0-rc23\nscan_version=2.3.0\n"
         "raw=%08lx\nprocessed=%08lx\n"
         "wrapper=003827d8\nrebuild_subobject=003827e4\n",
         g_lastRawAddress, g_lastProcessedAddress);
@@ -3659,7 +3771,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc22.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc23.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
