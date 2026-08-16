@@ -56,7 +56,7 @@ static volatile Result recoveryRenderResult;
 static volatile u32 recoveryRenderCount;
 
 static void renderMenu(u8 *panel, u32 selection, bool reverse,
-                       bool foldersFirst, u32 state,
+                       bool foldersFirst, bool collapseGaps, u32 state,
                        Result result, u32 mutations);
 
 static u32 readLiveHidHeld(u32 *indexOut)
@@ -111,7 +111,7 @@ static Result recoveryToggleActiveHome(u32 pid)
                 if (R_SUCCEEDED(recoveryRenderResult))
                 {
                     renderMenu((u8 *)CTH_RECOVERY_PANEL_LOCAL, 0, false, true,
-                               CTH_IDLE, 0, 0);
+                               false, CTH_IDLE, 0, 0);
                     svcFlushProcessDataCache(CUR_PROCESS_HANDLE,
                         CTH_RECOVERY_PANEL_LOCAL, CTH_PANEL_SIZE);
                     svcFlushProcessDataCache(process, panelAddress,
@@ -190,7 +190,7 @@ static void writeLifecycle(u32 pid, const char *state, Result result,
     char report[768];
     int n = sprintf(report,
         "LumaHome HOME hook lifecycle log\n"
-        "runtime_version=1.9.1\nmode=active-home-controller-v191\n"
+        "runtime_version=1.9.2\nmode=active-home-controller-v192\n"
         "pid=%lu\nstate=%s\nresult=%08lx\nmarker=%08lx\n"
         "heartbeat=%lu\npanel=%08lx\nframe_hook=%08lx\n"
         "expected_frame_hook=%08lx\nstub=%08lx\nrecoveries=%lu\n",
@@ -292,7 +292,7 @@ static void writeWatchdog(u32 pid, Result result, u32 marker, u32 heartbeat,
         stallSamples >= 3 ? "heartbeat-stalled" : "healthy";
     int n = sprintf(report,
         "LumaHome independent HOME watchdog\n"
-        "watchdog_version=1.9.1\nbase_overlay=V167\n"
+        "watchdog_version=1.9.2\nbase_overlay=V167\n"
         "state=%s\nresult=%08lx\n"
         "pid=%lu\npid_changes=%lu\nsamples=%lu\n"
         "marker=%08lx\nheartbeat=%lu\nprevious_heartbeat=%lu\n"
@@ -320,7 +320,7 @@ static void writeWatchdog(u32 pid, Result result, u32 marker, u32 heartbeat,
                      watchdogHomeMarkers[i], i, watchdogHomeHeartbeats[i]);
     IFile file;
     Result open = IFile_Open(&file, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/Cthulhu/watchdog-v191.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/Cthulhu/watchdog-v192.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE);
     if (R_SUCCEEDED(open))
     {
@@ -447,18 +447,20 @@ static void drawText(u8 *panel, u32 x, u32 y, const char *text, bool selected)
 }
 
 static void renderMenu(u8 *panel, u32 selection, bool reverse,
-                       bool foldersFirst, u32 state,
+                       bool foldersFirst, bool collapseGaps, u32 state,
                        Result result, u32 mutations)
 {
     memset(panel, 0x20, CTH_PANEL_SIZE);
-    drawText(panel, 5, 8, "LUMAHOME 0.1 RC15", false);
-    drawText(panel, 5, 30, selection == 0 ? "> DIRECTION" : "  DIRECTION", selection == 0);
-    drawText(panel, 5, 43, reverse ? "  Z-A" : "  A-Z", selection == 0);
-    drawText(panel, 5, 64, selection == 1 ? "> FOLDER PLACEMENT" : "  FOLDER PLACEMENT", selection == 1);
-    drawText(panel, 5, 77, foldersFirst ? "  BEFORE TITLES" : "  AFTER TITLES", selection == 1);
-    drawText(panel, 5, 104, "UP/DOWN FIELD", false);
-    drawText(panel, 5, 117, "LEFT/RIGHT CHANGE", false);
-    drawText(panel, 5, 130, "A APPLY  L+Y CLOSE", false);
+    drawText(panel, 5, 8, "LUMAHOME 0.1 RC16", false);
+    drawText(panel, 5, 27, selection == 0 ? "> DIRECTION" : "  DIRECTION", selection == 0);
+    drawText(panel, 5, 40, reverse ? "  Z-A" : "  A-Z", selection == 0);
+    drawText(panel, 5, 58, selection == 1 ? "> FOLDER PLACEMENT" : "  FOLDER PLACEMENT", selection == 1);
+    drawText(panel, 5, 71, foldersFirst ? "  BEFORE TITLES" : "  AFTER TITLES", selection == 1);
+    drawText(panel, 5, 89, selection == 2 ? "> COLLAPSE GAPS" : "  COLLAPSE GAPS", selection == 2);
+    drawText(panel, 5, 102, collapseGaps ? "  ON" : "  OFF", selection == 2);
+    drawText(panel, 5, 122, "UP/DOWN FIELD", false);
+    drawText(panel, 5, 135, "LEFT/RIGHT CHANGE", false);
+    drawText(panel, 5, 148, "A APPLY  L+Y CLOSE", false);
     if (state == CTH_APPLYING)
         drawText(panel, 5, 158, "APPLYING...", false);
     else if (state == CTH_SUCCESS)
@@ -494,17 +496,18 @@ static void flushShared(Handle process, u32 panelAddress)
 
 static void writeSnapshot(u32 pid, volatile u32 *v, u32 held, u32 pressed,
                           u32 selection, bool reverse, bool foldersFirst,
+                          bool collapseGaps,
                           u32 state, Result result,
                           u32 mutations)
 {
     char report[1800];
     int n = sprintf(report,
         "LumaHome HOME OSD automatic runtime log\n"
-        "release=0.1.0-rc15\nruntime_version=1.9.1\n"
-        "mode=active-home-controller-v191\n"
+        "release=0.1.0-rc16\nruntime_version=1.9.2\n"
+        "mode=active-home-controller-v192\n"
         "pid=%lu\nmarker=%08lx\nmarker_ok=%u\n"
         "heartbeat=%lu\noverlay=%lu\nheld=%08lx\npressed=%08lx\n"
-        "selection=%lu\ndirection=%s\nfolder_placement=%s\n"
+        "selection=%lu\ndirection=%s\nfolder_placement=%s\ncollapse_gaps=%s\n"
         "state=%lu\nsort_result=%08lx\nmutations=%lu\n"
         "panel=%08lx\nallocation=%08lx\nrender_count=%lu\n"
         "display_hooks=%lu\ndispatcher_calls=%lu\ndispatcher_suppressed=%lu\n"
@@ -515,6 +518,7 @@ static void writeSnapshot(u32 pid, volatile u32 *v, u32 held, u32 pressed,
         pid, v[0], v[0] == CTH_MARKER_V167, v[2], v[8], held, pressed,
         selection, reverse ? "Z-A" : "A-Z",
         foldersFirst ? "before" : "after",
+        collapseGaps ? "on" : "off",
         state, result, mutations, v[12], v[13], v[11], v[33],
         v[34], v[35], v[44], v[45], v[46], v[9],
         v[47], v[48], v[49], v[50]);
@@ -620,11 +624,11 @@ static void runtimeMain(void)
         runtimeAttachedPid = pid;
         CthulhuHomeMenu_WritePersistenceAudit();
         u32 previous = readLiveHidHeld(NULL), selection = 0, state = CTH_IDLE;
-        bool reverse = false, foldersFirst = true;
+        bool reverse = false, foldersFirst = true, collapseGaps = false;
         u32 mutations = 0, algorithm = 0;
         Result sortResult = 0;
         u32 repeatKey = 0, repeatFrames = 0, logFrames = 0;
-        renderMenu(panel, selection, reverse, foldersFirst,
+        renderMenu(panel, selection, reverse, foldersFirst, collapseGaps,
                    state, sortResult, mutations);
         flushShared(process, panelAddress);
 
@@ -653,14 +657,15 @@ static void runtimeMain(void)
                 else { repeatFrames++; repeat = repeatFrames == 24 ||
                         (repeatFrames > 24 && ((repeatFrames - 24) % 6) == 0); }
                 if ((pressed & KEY_UP) || (repeat && (nav & KEY_UP)))
-                { selection = selection == 0 ? 1 : 0; redraw = true; }
+                { selection = selection == 0 ? 2 : selection - 1; redraw = true; }
                 else if ((pressed & KEY_DOWN) || (repeat && (nav & KEY_DOWN)))
-                { selection = selection == 1 ? 0 : 1; redraw = true; }
+                { selection = selection == 2 ? 0 : selection + 1; redraw = true; }
 
                 if (pressed & (KEY_LEFT | KEY_RIGHT))
                 {
                     if (selection == 0) reverse = !reverse;
-                    else foldersFirst = !foldersFirst;
+                    else if (selection == 1) foldersFirst = !foldersFirst;
+                    else collapseGaps = !collapseGaps;
                     state = CTH_IDLE;
                     redraw = true;
                 }
@@ -669,12 +674,12 @@ static void runtimeMain(void)
                 {
                     channel[0x108 / 4] = 0;
                     state = CTH_APPLYING;
-                    renderMenu(panel, selection, reverse, foldersFirst,
+                    renderMenu(panel, selection, reverse, foldersFirst, collapseGaps,
                                state, sortResult, mutations);
                     flushShared(process, panelAddress);
                     u16 chosen = 0;
                     sortResult = CthulhuHomeMenu_RunBackgroundSort(
-                        reverse ? 2 : 1, foldersFirst, channel,
+                        reverse ? 2 : 1, foldersFirst, collapseGaps, channel,
                         &chosen, &mutations);
                     algorithm = chosen;
                     (void)algorithm;
@@ -686,14 +691,14 @@ static void runtimeMain(void)
 
             if (redraw)
             {
-                renderMenu(panel, selection, reverse, foldersFirst,
+                renderMenu(panel, selection, reverse, foldersFirst, collapseGaps,
                            state, sortResult, mutations);
                 flushShared(process, panelAddress);
             }
             if (++logFrames >= 120)
             {
                 writeSnapshot(pid, channel, held, pressed, selection,
-                              reverse, foldersFirst, state, sortResult,
+                              reverse, foldersFirst, collapseGaps, state, sortResult,
                               mutations);
                 logFrames = 0;
             }

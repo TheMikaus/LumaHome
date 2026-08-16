@@ -13,6 +13,7 @@ void CthulhuHomeMenu_HandleShutdownNotification(u32 notificationId);
 void CthulhuHomeMenu_WritePersistenceAudit(void);
 Result CthulhuHomeMenu_RunBackgroundSort(u16 selectedAlgorithm,
                                          bool foldersFirst,
+                                         bool collapseGaps,
                                          volatile u32 *commandChannel,
                                          u16 *algorithmOut,
                                          u32 *mutationsOut);

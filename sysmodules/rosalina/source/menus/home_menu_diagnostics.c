@@ -19,7 +19,7 @@
 #define CTH_LAUNCHER_TO_SD_DELTA (CTH_SD_RAW_ADDRESS - CTH_NAND_RAW_ADDRESS)
 #define CTH_REQUEST_MAGIC 0x53544843
 #define CTH_REQUEST_VERSION 3
-#define CTH_SORT_BUILD_VERSION "0.1.0-rc15"
+#define CTH_SORT_BUILD_VERSION "0.1.0-rc16"
 #define CTH_INLINE_FOLDER_RECORD_RECOVERY_HINT 190
 #define CTH_FRAMEWORK_BUILD_VERSION "0.7.7-multi-home"
 #define CTH_FOLDER_POSITION_OFFSET 0x11DC
@@ -2351,6 +2351,7 @@ static Result WriteSortTransactionReport(Result result, u16 algorithm, u32 mutat
 
 static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
                           bool foldersFirst,
+                          bool collapseGaps,
                           u16 *algorithmOut, u32 *mutationsOut)
 {
     CthRequestHeader *header = NULL;
@@ -2573,7 +2574,8 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
             for (u32 i = 0; R_SUCCEEDED(res) && i < groupCount; i++)
             {
                 CthSdMutation *mutation = &g_sortMutations[mutationIndexes[i]];
-                mutation->newPosition = positions[i];
+                mutation->newPosition = collapseGaps ?
+                    (s16)(group == -1 ? 13 + i : i) : positions[i];
                 memcpy(g_sortRaw + 0xCB0 + mutation->slot * 2,
                        &mutation->newPosition, sizeof(s16));
             }
@@ -2630,7 +2632,30 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
             if (g_folderMutations[i].oldPosition < 0 ||
                 g_folderMutations[i].oldPosition >= CTH_LAYOUT_SLOTS)
                 missingFolderCount++;
-        if (R_SUCCEEDED(res) && missingFolderCount != 0)
+        if (R_SUCCEEDED(res) && collapseGaps)
+        {
+            static u16 topLevelIndexes[CTH_LAYOUT_SLOTS];
+            u32 topLevelCount = 0;
+            for (u32 i = 0; i < mutationCount; i++)
+                if (g_sortMutations[i].folder == -1)
+                    topLevelIndexes[topLevelCount++] = (u16)i;
+            if (13 + topLevelCount + folderCount > CTH_LAYOUT_SLOTS)
+                res = (Result)-112;
+            u32 titleBase = foldersFirst ? 13 + folderCount : 13;
+            u32 folderBase = foldersFirst ? 13 : 13 + topLevelCount;
+            for (u32 i = 0; R_SUCCEEDED(res) && i < topLevelCount; i++)
+                g_sortMutations[topLevelIndexes[i]].newPosition =
+                    (s16)(titleBase + i);
+            for (u32 i = 0; R_SUCCEEDED(res) && i < folderCount; i++)
+            {
+                u8 id = folderIds[i];
+                for (u32 j = 0; j < folderCount; j++)
+                    if (g_folderMutations[j].id == id)
+                        g_folderMutations[j].newPosition =
+                            (s16)(folderBase + i);
+            }
+        }
+        else if (R_SUCCEEDED(res) && missingFolderCount != 0)
         {
             /* Recovery for a folder whose Launcher number survived but whose
                position was invalidated. Use only currently free space just
@@ -2871,7 +2896,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     char *report = g_layoutBackrefReport;
     int length = sprintf(report,
         "LumaHome live icon map report\n"
-        "release=0.1.0-rc15\nscan_version=2.0.9\n"
+        "release=0.1.0-rc16\nscan_version=2.1.0\n"
         "raw=%08lx\nprocessed=%08lx\n"
         "wrapper=003827d8\nrebuild_subobject=003827e4\n",
         g_lastRawAddress, g_lastProcessedAddress);
@@ -3469,7 +3494,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc15.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc16.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -3482,6 +3507,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
 
 Result CthulhuHomeMenu_RunBackgroundSort(u16 selectedAlgorithm,
                                          bool foldersFirst,
+                                         bool collapseGaps,
                                          volatile u32 *commandChannel,
                                          u16 *algorithmOut,
                                          u32 *mutationsOut)
@@ -3498,7 +3524,7 @@ Result CthulhuHomeMenu_RunBackgroundSort(u16 selectedAlgorithm,
         g_livePlannedFolderCount = 0;
         g_liveProbeOnly = false;
         svcSleepThread(20 * 1000 * 1000LL);
-        res = ApplySdSort(selectedAlgorithm, true, foldersFirst,
+        res = ApplySdSort(selectedAlgorithm, true, foldersFirst, collapseGaps,
                           algorithmOut, mutationsOut);
         g_liveProbeOnly = res == (Result)-108;
         u32 iconOwnerAddress = (R_SUCCEEDED(res) || g_liveProbeOnly) ?
@@ -3610,7 +3636,7 @@ void CthulhuHomeMenu_ApplySdSort(void)
     u16 algorithm = 0;
     u32 mutations = 0;
     u16 selectedAlgorithm = input & KEY_X ? 1 : input & KEY_Y ? 2 : 0;
-    Result res = ApplySdSort(selectedAlgorithm, false, true,
+    Result res = ApplySdSort(selectedAlgorithm, false, true, false,
                              &algorithm, &mutations);
     WriteSortJournal("apply-returned", res);
     do
@@ -3664,7 +3690,7 @@ void CthulhuHomeMenu_ArmFolderSort(void)
     u16 algorithm = 0;
     u32 mutations = 0;
     u16 selected = input & KEY_X ? 1 : 2;
-    Result res = ApplySdSort(selected, true, selected == 1,
+    Result res = ApplySdSort(selected, true, selected == 1, false,
                              &algorithm, &mutations);
     WriteSortJournal("arm-folder-sort-returned", res);
     do
