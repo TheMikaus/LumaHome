@@ -19,7 +19,7 @@
 #define CTH_LAUNCHER_TO_SD_DELTA (CTH_SD_RAW_ADDRESS - CTH_NAND_RAW_ADDRESS)
 #define CTH_REQUEST_MAGIC 0x53544843
 #define CTH_REQUEST_VERSION 3
-#define CTH_SORT_BUILD_VERSION "0.1.0-rc20"
+#define CTH_SORT_BUILD_VERSION "0.1.0-rc21"
 #define CTH_INLINE_FOLDER_RECORD_RECOVERY_HINT 190
 #define CTH_FRAMEWORK_BUILD_VERSION "0.7.7-multi-home"
 #define CTH_FOLDER_POSITION_OFFSET 0x11DC
@@ -2975,7 +2975,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     char *report = g_layoutBackrefReport;
     int length = sprintf(report,
         "LumaHome live icon map report\n"
-        "release=0.1.0-rc20\nscan_version=2.1.4\n"
+        "release=0.1.0-rc21\nscan_version=2.2.0\n"
         "raw=%08lx\nprocessed=%08lx\n"
         "wrapper=003827d8\nrebuild_subobject=003827e4\n",
         g_lastRawAddress, g_lastProcessedAddress);
@@ -3328,6 +3328,12 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
                         "folder_move_inline moved=0\n");
             }
             length += sprintf(report + length, "non_title_inline=");
+            const u32 unmatchedLocal = 0x00D00000;
+            const u32 unmatchedMapSize = 0x3B000;
+            u32 unmatchedRecordOffset = records & 0xFFF;
+            Result unmatchedMapResult = records >= 0x08000000 && records < 0x40000000 ?
+                svcMapProcessMemoryEx(CUR_PROCESS_HANDLE, unmatchedLocal, home,
+                    records & ~0xFFF, unmatchedMapSize, 0) : (Result)-1;
             u32 nonTitleInline = 0;
             for (u32 i = 0; i < 420 && nonTitleInline < 48; i++)
             {
@@ -3345,9 +3351,22 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
                         if (inlineMap[j] == candidate) occurrences++;
                     length += sprintf(report + length, "%d@%lu(x%lu),",
                         candidate, (unsigned long)i, (unsigned long)occurrences);
+                    if (R_SUCCEEDED(unmatchedMapResult) && candidate < 420)
+                    {
+                        const u32 *w = (const u32 *)(unmatchedLocal +
+                            unmatchedRecordOffset + candidate * 0x230);
+                        length += sprintf(report + length,
+                            "{id=%08lx%08lx w2=%08lx w3=%08lx w4=%08lx "
+                            "w5=%08lx w6=%08lx w7=%08lx w14=%08lx}",
+                            w[1], w[0], w[2], w[3], w[4], w[5], w[6],
+                            w[7], w[14]);
+                    }
                     nonTitleInline++;
                 }
             }
+            if (R_SUCCEEDED(unmatchedMapResult))
+                svcUnmapProcessMemoryEx(CUR_PROCESS_HANDLE, unmatchedLocal,
+                                        unmatchedMapSize);
             length += sprintf(report + length, " count=%lu\n",
                 (unsigned long)nonTitleInline);
             for (u32 i = 0; i < 60; i += 10)
@@ -3573,7 +3592,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc20.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc21.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
