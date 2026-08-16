@@ -19,12 +19,14 @@
 #define CTH_LAUNCHER_TO_SD_DELTA (CTH_SD_RAW_ADDRESS - CTH_NAND_RAW_ADDRESS)
 #define CTH_REQUEST_MAGIC 0x53544843
 #define CTH_REQUEST_VERSION 3
-#define CTH_SORT_BUILD_VERSION "0.1.0-rc16"
+#define CTH_SORT_BUILD_VERSION "0.1.0-rc17"
 #define CTH_INLINE_FOLDER_RECORD_RECOVERY_HINT 190
 #define CTH_FRAMEWORK_BUILD_VERSION "0.7.7-multi-home"
 #define CTH_FOLDER_POSITION_OFFSET 0x11DC
 #define CTH_FOLDER_NAME_OFFSET 0x1560
 #define CTH_FOLDER_NUMBER_OFFSET 0x1D58
+#define CTH_HOME_ROWS_OFFSET 0xB51
+#define CTH_FOLDER_ROWS_OFFSET 0x1434
 #define CTH_FOLDER_COUNT 60
 #define CTH_FOLDER_SLOTS 60
 #define CTH_PROCESSED_ENTRIES (CTH_LAYOUT_SLOTS + CTH_FOLDER_COUNT * CTH_FOLDER_SLOTS)
@@ -1785,6 +1787,44 @@ static void SortPositions(s16 *positions, u32 count)
     }
 }
 
+/* Launcher coordinates advance down a column before moving right.  This
+ * alternate key presents those same coordinates in visual row-major order. */
+static u32 TraversalKey(s16 position, s16 origin, u32 rows, u32 columns,
+                        bool rowMajor)
+{
+    u32 relative = (u32)(position - origin);
+    return rowMajor ? (relative % rows) * columns + relative / rows : relative;
+}
+
+static void SortPositionsForTraversal(s16 *positions, u32 count, s16 origin,
+                                      u32 rows, bool rowMajor)
+{
+    if (!rowMajor) { SortPositions(positions, count); return; }
+    u32 maximum = 0;
+    for (u32 i = 0; i < count; i++)
+        if (positions[i] >= origin && (u32)(positions[i] - origin) > maximum)
+            maximum = (u32)(positions[i] - origin);
+    u32 columns = maximum / rows + 1;
+    for (u32 i = 1; i < count; i++)
+    {
+        s16 value = positions[i];
+        u32 key = TraversalKey(value, origin, rows, columns, true);
+        u32 j = i;
+        while (j > 0 && TraversalKey(positions[j - 1], origin, rows,
+                                     columns, true) > key)
+        { positions[j] = positions[j - 1]; j--; }
+        positions[j] = value;
+    }
+}
+
+static s16 CompactTraversalPosition(u32 rank, u32 count, s16 origin,
+                                    u32 rows, bool rowMajor)
+{
+    if (!rowMajor) return (s16)(origin + rank);
+    u32 columns = (count + rows - 1) / rows;
+    return (s16)(origin + (rank % columns) * rows + rank / columns);
+}
+
 static u16 FoldRequestCharacter(u16 value)
 {
     return value >= 'A' && value <= 'Z' ? value + ('a' - 'A') : value;
@@ -2352,6 +2392,7 @@ static Result WriteSortTransactionReport(Result result, u16 algorithm, u32 mutat
 static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
                           bool foldersFirst,
                           bool collapseGaps,
+                          bool rowMajor,
                           u16 *algorithmOut, u32 *mutationsOut)
 {
     CthRequestHeader *header = NULL;
@@ -2521,6 +2562,16 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
             launcherFileValid ? "file" : "resident", launcherUsed);
     }
 
+    u32 homeRows = 0;
+    if (R_SUCCEEDED(res))
+    {
+        homeRows = (u32)g_launcherRaw[CTH_HOME_ROWS_OFFSET] + 1;
+        if (homeRows < 1 || homeRows > 6) res = (Result)-113;
+        g_sortDetailsLength += sprintf(g_sortDetails + g_sortDetailsLength,
+            "[TRAVERSAL]\nmode=%s home_rows=%lu\n\n",
+            rowMajor ? "row-major" : "column-major", (unsigned long)homeRows);
+    }
+
     u32 mutationCount = 0;
     if (R_SUCCEEDED(res))
     {
@@ -2567,7 +2618,16 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
                 positions[groupCount] = g_sortMutations[i].oldPosition;
                 groupCount++;
             }
-            SortPositions(positions, groupCount);
+            u32 rows = homeRows;
+            s16 origin = 13;
+            if (group >= 0)
+            {
+                rows = g_launcherRaw[CTH_FOLDER_ROWS_OFFSET + group];
+                origin = 0;
+                if (rows < 1 || rows > 6) { res = (Result)-114; break; }
+            }
+            SortPositionsForTraversal(positions, groupCount, origin, rows,
+                                      rowMajor);
             for (u32 i = 1; i < groupCount; i++)
                 if (positions[i] == positions[i - 1])
                     res = (Result)-25;
@@ -2575,7 +2635,8 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
             {
                 CthSdMutation *mutation = &g_sortMutations[mutationIndexes[i]];
                 mutation->newPosition = collapseGaps ?
-                    (s16)(group == -1 ? 13 + i : i) : positions[i];
+                    CompactTraversalPosition(i, groupCount, origin, rows,
+                                             rowMajor) : positions[i];
                 memcpy(g_sortRaw + 0xCB0 + mutation->slot * 2,
                        &mutation->newPosition, sizeof(s16));
             }
@@ -2641,18 +2702,22 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
                     topLevelIndexes[topLevelCount++] = (u16)i;
             if (13 + topLevelCount + folderCount > CTH_LAYOUT_SLOTS)
                 res = (Result)-112;
-            u32 titleBase = foldersFirst ? 13 + folderCount : 13;
-            u32 folderBase = foldersFirst ? 13 : 13 + topLevelCount;
+            u32 titleBase = foldersFirst ? folderCount : 0;
+            u32 folderBase = foldersFirst ? 0 : topLevelCount;
+            u32 combinedCount = topLevelCount + folderCount;
             for (u32 i = 0; R_SUCCEEDED(res) && i < topLevelCount; i++)
                 g_sortMutations[topLevelIndexes[i]].newPosition =
-                    (s16)(titleBase + i);
+                    CompactTraversalPosition(titleBase + i, combinedCount,
+                                             13, homeRows, rowMajor);
             for (u32 i = 0; R_SUCCEEDED(res) && i < folderCount; i++)
             {
                 u8 id = folderIds[i];
                 for (u32 j = 0; j < folderCount; j++)
                     if (g_folderMutations[j].id == id)
                         g_folderMutations[j].newPosition =
-                            (s16)(folderBase + i);
+                            CompactTraversalPosition(folderBase + i,
+                                                     combinedCount, 13,
+                                                     homeRows, rowMajor);
             }
         }
         else if (R_SUCCEEDED(res) && missingFolderCount != 0)
@@ -2706,7 +2771,8 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
             }
             for (u32 i = 0; i < folderCount; i++)
                 occupied[occupiedCount++] = g_folderMutations[i].oldPosition;
-            SortPositions(occupied, occupiedCount);
+            SortPositionsForTraversal(occupied, occupiedCount, 13, homeRows,
+                                      rowMajor);
             for (u32 i = 1; i < occupiedCount; i++)
                 if (occupied[i] == occupied[i - 1])
                 {
@@ -2896,7 +2962,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     char *report = g_layoutBackrefReport;
     int length = sprintf(report,
         "LumaHome live icon map report\n"
-        "release=0.1.0-rc16\nscan_version=2.1.0\n"
+        "release=0.1.0-rc17\nscan_version=2.1.1\n"
         "raw=%08lx\nprocessed=%08lx\n"
         "wrapper=003827d8\nrebuild_subobject=003827e4\n",
         g_lastRawAddress, g_lastProcessedAddress);
@@ -3494,7 +3560,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc16.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc17.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -3508,6 +3574,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
 Result CthulhuHomeMenu_RunBackgroundSort(u16 selectedAlgorithm,
                                          bool foldersFirst,
                                          bool collapseGaps,
+                                         bool rowMajor,
                                          volatile u32 *commandChannel,
                                          u16 *algorithmOut,
                                          u32 *mutationsOut)
@@ -3525,6 +3592,7 @@ Result CthulhuHomeMenu_RunBackgroundSort(u16 selectedAlgorithm,
         g_liveProbeOnly = false;
         svcSleepThread(20 * 1000 * 1000LL);
         res = ApplySdSort(selectedAlgorithm, true, foldersFirst, collapseGaps,
+                          rowMajor,
                           algorithmOut, mutationsOut);
         g_liveProbeOnly = res == (Result)-108;
         u32 iconOwnerAddress = (R_SUCCEEDED(res) || g_liveProbeOnly) ?
@@ -3636,7 +3704,7 @@ void CthulhuHomeMenu_ApplySdSort(void)
     u16 algorithm = 0;
     u32 mutations = 0;
     u16 selectedAlgorithm = input & KEY_X ? 1 : input & KEY_Y ? 2 : 0;
-    Result res = ApplySdSort(selectedAlgorithm, false, true, false,
+    Result res = ApplySdSort(selectedAlgorithm, false, true, false, false,
                              &algorithm, &mutations);
     WriteSortJournal("apply-returned", res);
     do
@@ -3690,7 +3758,7 @@ void CthulhuHomeMenu_ArmFolderSort(void)
     u16 algorithm = 0;
     u32 mutations = 0;
     u16 selected = input & KEY_X ? 1 : 2;
-    Result res = ApplySdSort(selected, true, selected == 1, false,
+    Result res = ApplySdSort(selected, true, selected == 1, false, false,
                              &algorithm, &mutations);
     WriteSortJournal("arm-folder-sort-returned", res);
     do
