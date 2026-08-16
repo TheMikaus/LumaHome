@@ -28,6 +28,16 @@
 
 enum { CTH_IDLE, CTH_APPLYING, CTH_SUCCESS, CTH_FAILED, CTH_DEFERRED };
 
+#define CTH_SETTINGS_MAGIC 0x53484D4C
+#define CTH_SETTINGS_VERSION 1
+typedef struct
+{
+    u32 magic;
+    u16 version;
+    u16 flags;
+    u32 check;
+} CthRuntimeSettings;
+
 static MyThread runtimeThread;
 static u8 CTR_ALIGN(0x1000) runtimeStack[0x2000];
 static MyThread watchdogThread;
@@ -59,6 +69,81 @@ static void renderMenu(u8 *panel, u32 selection, bool reverse,
                        bool foldersFirst, bool collapseGaps, bool rowMajor,
                        u32 state,
                        Result result, u32 mutations);
+
+static u32 settingsCheck(const CthRuntimeSettings *settings)
+{
+    return settings->magic ^ ((u32)settings->version << 16) ^
+           settings->flags ^ 0xA55A39C7;
+}
+
+static void loadSettings(bool *reverse, bool *foldersFirst,
+                         bool *collapseGaps, bool *rowMajor)
+{
+    CthRuntimeSettings settings = {0};
+    IFile file = {0};
+    Result res = IFile_Open(&file, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, ""),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/settings.bin"), FS_OPEN_READ);
+    if (R_SUCCEEDED(res))
+    {
+        u64 read = 0;
+        res = IFile_Read(&file, &read, &settings, sizeof(settings));
+        IFile_Close(&file);
+        if (R_SUCCEEDED(res) && read == sizeof(settings) &&
+            settings.magic == CTH_SETTINGS_MAGIC &&
+            settings.version == CTH_SETTINGS_VERSION &&
+            settings.check == settingsCheck(&settings))
+        {
+            *reverse = (settings.flags & 1) != 0;
+            *foldersFirst = (settings.flags & 2) != 0;
+            *collapseGaps = (settings.flags & 4) != 0;
+            *rowMajor = (settings.flags & 8) != 0;
+        }
+    }
+}
+
+static Result saveSettings(bool reverse, bool foldersFirst,
+                           bool collapseGaps, bool rowMajor)
+{
+    CthRuntimeSettings settings = {
+        CTH_SETTINGS_MAGIC, CTH_SETTINGS_VERSION,
+        (u16)((reverse ? 1 : 0) | (foldersFirst ? 2 : 0) |
+              (collapseGaps ? 4 : 0) | (rowMajor ? 8 : 0)), 0
+    };
+    settings.check = settingsCheck(&settings);
+    IFile file = {0};
+    Result res = IFile_Open(&file, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, ""),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/settings.bin"),
+        FS_OPEN_CREATE | FS_OPEN_WRITE);
+    if (R_FAILED(res)) return res;
+    u64 written = 0;
+    res = IFile_Write(&file, &written, &settings, sizeof(settings), FS_WRITE_FLUSH);
+    if (R_SUCCEEDED(res) && written != sizeof(settings)) res = (Result)-1;
+    if (R_SUCCEEDED(res)) res = IFile_SetSize(&file, sizeof(settings));
+    IFile_Close(&file);
+    return res;
+}
+
+static void writeAppliedOptions(bool reverse, bool foldersFirst,
+                                bool collapseGaps, bool rowMajor)
+{
+    char report[384];
+    int length = sprintf(report,
+        "LumaHome last applied sort options\n"
+        "release=0.1.0-rc19\n"
+        "direction=%s\nfolder_placement=%s\ncollapse_gaps=%s\ntraversal=%s\n",
+        reverse ? "Z-A" : "A-Z", foldersFirst ? "before" : "after",
+        collapseGaps ? "on" : "off", rowMajor ? "row-major" : "column-major");
+    IFile file = {0};
+    if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, ""),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/last-sort-options.txt"),
+        FS_OPEN_CREATE | FS_OPEN_WRITE)))
+    {
+        u64 written = 0;
+        IFile_Write(&file, &written, report, length, FS_WRITE_FLUSH);
+        IFile_SetSize(&file, length);
+        IFile_Close(&file);
+    }
+}
 
 static u32 readLiveHidHeld(u32 *indexOut)
 {
@@ -191,7 +276,7 @@ static void writeLifecycle(u32 pid, const char *state, Result result,
     char report[768];
     int n = sprintf(report,
         "LumaHome HOME hook lifecycle log\n"
-        "runtime_version=1.9.4\nmode=active-home-controller-v194\n"
+        "runtime_version=1.9.5\nmode=active-home-controller-v195\n"
         "pid=%lu\nstate=%s\nresult=%08lx\nmarker=%08lx\n"
         "heartbeat=%lu\npanel=%08lx\nframe_hook=%08lx\n"
         "expected_frame_hook=%08lx\nstub=%08lx\nrecoveries=%lu\n",
@@ -293,7 +378,7 @@ static void writeWatchdog(u32 pid, Result result, u32 marker, u32 heartbeat,
         stallSamples >= 3 ? "heartbeat-stalled" : "healthy";
     int n = sprintf(report,
         "LumaHome independent HOME watchdog\n"
-        "watchdog_version=1.9.4\nbase_overlay=V167\n"
+        "watchdog_version=1.9.5\nbase_overlay=V167\n"
         "state=%s\nresult=%08lx\n"
         "pid=%lu\npid_changes=%lu\nsamples=%lu\n"
         "marker=%08lx\nheartbeat=%lu\nprevious_heartbeat=%lu\n"
@@ -321,7 +406,7 @@ static void writeWatchdog(u32 pid, Result result, u32 marker, u32 heartbeat,
                      watchdogHomeMarkers[i], i, watchdogHomeHeartbeats[i]);
     IFile file;
     Result open = IFile_Open(&file, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/Cthulhu/watchdog-v194.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/Cthulhu/watchdog-v195.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE);
     if (R_SUCCEEDED(open))
     {
@@ -453,7 +538,7 @@ static void renderMenu(u8 *panel, u32 selection, bool reverse,
                        Result result, u32 mutations)
 {
     memset(panel, 0x20, CTH_PANEL_SIZE);
-    drawText(panel, 5, 8, "LUMAHOME 0.1 RC18", false);
+    drawText(panel, 5, 8, "LUMAHOME 0.1 RC19", false);
     drawText(panel, 5, 27, selection == 0 ? "> DIRECTION" : "  DIRECTION", selection == 0);
     drawText(panel, 5, 40, reverse ? "  Z-A" : "  A-Z", selection == 0);
     drawText(panel, 5, 58, selection == 1 ? "> FOLDER PLACEMENT" : "  FOLDER PLACEMENT", selection == 1);
@@ -506,8 +591,8 @@ static void writeSnapshot(u32 pid, volatile u32 *v, u32 held, u32 pressed,
     char report[1800];
     int n = sprintf(report,
         "LumaHome HOME OSD automatic runtime log\n"
-        "release=0.1.0-rc18\nruntime_version=1.9.4\n"
-        "mode=active-home-controller-v194\n"
+        "release=0.1.0-rc19\nruntime_version=1.9.5\n"
+        "mode=active-home-controller-v195\n"
         "pid=%lu\nmarker=%08lx\nmarker_ok=%u\n"
         "heartbeat=%lu\noverlay=%lu\nheld=%08lx\npressed=%08lx\n"
         "selection=%lu\ndirection=%s\nfolder_placement=%s\ncollapse_gaps=%s\ntraversal=%s\n"
@@ -630,6 +715,7 @@ static void runtimeMain(void)
         u32 previous = readLiveHidHeld(NULL), selection = 0, state = CTH_IDLE;
         bool reverse = false, foldersFirst = true, collapseGaps = false;
         bool rowMajor = false;
+        loadSettings(&reverse, &foldersFirst, &collapseGaps, &rowMajor);
         u32 mutations = 0, algorithm = 0;
         Result sortResult = 0;
         u32 repeatKey = 0, repeatFrames = 0, logFrames = 0;
@@ -672,12 +758,15 @@ static void runtimeMain(void)
                     else if (selection == 1) foldersFirst = !foldersFirst;
                     else if (selection == 2) collapseGaps = !collapseGaps;
                     else rowMajor = !rowMajor;
+                    saveSettings(reverse, foldersFirst, collapseGaps, rowMajor);
                     state = CTH_IDLE;
                     redraw = true;
                 }
 
                 if (pressed & KEY_A)
                 {
+                    saveSettings(reverse, foldersFirst, collapseGaps, rowMajor);
+                    writeAppliedOptions(reverse, foldersFirst, collapseGaps, rowMajor);
                     channel[0x108 / 4] = 0;
                     state = CTH_APPLYING;
                     renderMenu(panel, selection, reverse, foldersFirst, collapseGaps, rowMajor,
