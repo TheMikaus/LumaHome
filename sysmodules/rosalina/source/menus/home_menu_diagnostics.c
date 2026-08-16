@@ -19,7 +19,7 @@
 #define CTH_LAUNCHER_TO_SD_DELTA (CTH_SD_RAW_ADDRESS - CTH_NAND_RAW_ADDRESS)
 #define CTH_REQUEST_MAGIC 0x53544843
 #define CTH_REQUEST_VERSION 3
-#define CTH_SORT_BUILD_VERSION "0.1.0-rc17"
+#define CTH_SORT_BUILD_VERSION "0.1.0-rc18"
 #define CTH_INLINE_FOLDER_RECORD_RECOVERY_HINT 190
 #define CTH_FRAMEWORK_BUILD_VERSION "0.7.7-multi-home"
 #define CTH_FOLDER_POSITION_OFFSET 0x11DC
@@ -1821,8 +1821,21 @@ static s16 CompactTraversalPosition(u32 rank, u32 count, s16 origin,
                                     u32 rows, bool rowMajor)
 {
     if (!rowMajor) return (s16)(origin + rank);
-    u32 columns = (count + rows - 1) / rows;
-    return (s16)(origin + (rank % columns) * rows + rank / columns);
+    /* The movable HOME range begins at 13, which is in the middle of a
+     * physical column on common five-row layouts.  Enumerate the safe
+     * contiguous coordinate range in absolute visual row order so A does not
+     * begin on that partial column and wrap back to the top later. */
+    u32 end = (u32)origin + count;
+    u32 columns = (end + rows - 1) / rows;
+    u32 seen = 0;
+    for (u32 row = 0; row < rows; row++)
+        for (u32 column = 0; column < columns; column++)
+        {
+            u32 position = column * rows + row;
+            if (position < (u32)origin || position >= end) continue;
+            if (seen++ == rank) return (s16)position;
+        }
+    return -1;
 }
 
 static u16 FoldRequestCharacter(u16 value)
@@ -2619,14 +2632,14 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
                 groupCount++;
             }
             u32 rows = homeRows;
-            s16 origin = 13;
+            s16 compactOrigin = 13;
             if (group >= 0)
             {
                 rows = g_launcherRaw[CTH_FOLDER_ROWS_OFFSET + group];
-                origin = 0;
+                compactOrigin = 0;
                 if (rows < 1 || rows > 6) { res = (Result)-114; break; }
             }
-            SortPositionsForTraversal(positions, groupCount, origin, rows,
+            SortPositionsForTraversal(positions, groupCount, 0, rows,
                                       rowMajor);
             for (u32 i = 1; i < groupCount; i++)
                 if (positions[i] == positions[i - 1])
@@ -2635,7 +2648,7 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
             {
                 CthSdMutation *mutation = &g_sortMutations[mutationIndexes[i]];
                 mutation->newPosition = collapseGaps ?
-                    CompactTraversalPosition(i, groupCount, origin, rows,
+                    CompactTraversalPosition(i, groupCount, compactOrigin, rows,
                                              rowMajor) : positions[i];
                 memcpy(g_sortRaw + 0xCB0 + mutation->slot * 2,
                        &mutation->newPosition, sizeof(s16));
@@ -2771,7 +2784,7 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
             }
             for (u32 i = 0; i < folderCount; i++)
                 occupied[occupiedCount++] = g_folderMutations[i].oldPosition;
-            SortPositionsForTraversal(occupied, occupiedCount, 13, homeRows,
+            SortPositionsForTraversal(occupied, occupiedCount, 0, homeRows,
                                       rowMajor);
             for (u32 i = 1; i < occupiedCount; i++)
                 if (occupied[i] == occupied[i - 1])
@@ -2962,7 +2975,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     char *report = g_layoutBackrefReport;
     int length = sprintf(report,
         "LumaHome live icon map report\n"
-        "release=0.1.0-rc17\nscan_version=2.1.1\n"
+        "release=0.1.0-rc18\nscan_version=2.1.2\n"
         "raw=%08lx\nprocessed=%08lx\n"
         "wrapper=003827d8\nrebuild_subobject=003827e4\n",
         g_lastRawAddress, g_lastProcessedAddress);
@@ -3560,7 +3573,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc17.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc18.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
