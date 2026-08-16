@@ -19,7 +19,7 @@
 #define CTH_LAUNCHER_TO_SD_DELTA (CTH_SD_RAW_ADDRESS - CTH_NAND_RAW_ADDRESS)
 #define CTH_REQUEST_MAGIC 0x53544843
 #define CTH_REQUEST_VERSION 3
-#define CTH_SORT_BUILD_VERSION "0.1.0-rc23"
+#define CTH_SORT_BUILD_VERSION "0.1.0-rc24"
 #define CTH_INLINE_FOLDER_RECORD_RECOVERY_HINT 190
 #define CTH_FRAMEWORK_BUILD_VERSION "0.7.7-multi-home"
 #define CTH_FOLDER_POSITION_OFFSET 0x11DC
@@ -2553,7 +2553,16 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
         bool present = false;
         for (u32 i = 0; i < header->entryCount; i++)
             if (entries[i].titleId == dsiAliases[alias].id)
+            {
                 present = true;
+                if (!(entries[i].flags & 1) || entries[i].title[0] == 0)
+                {
+                    memset(entries[i].title, 0, sizeof(entries[i].title));
+                    for (u32 c = 0; dsiAliases[alias].name[c] != 0 && c < 63; c++)
+                        entries[i].title[c] = (u8)dsiAliases[alias].name[c];
+                    entries[i].flags |= 1;
+                }
+            }
         if (!present && header->entryCount < 900)
         {
             CthRequestEntry *entry = &entries[header->entryCount++];
@@ -3154,7 +3163,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     char *report = g_layoutBackrefReport;
     int length = sprintf(report,
         "LumaHome live icon map report\n"
-        "release=0.1.0-rc23\nscan_version=2.3.0\n"
+        "release=0.1.0-rc24\nscan_version=2.3.1\n"
         "raw=%08lx\nprocessed=%08lx\n"
         "wrapper=003827d8\nrebuild_subobject=003827e4\n",
         g_lastRawAddress, g_lastProcessedAddress);
@@ -3771,7 +3780,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc23.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc24.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
