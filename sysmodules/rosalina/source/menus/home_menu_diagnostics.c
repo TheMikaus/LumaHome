@@ -19,7 +19,7 @@
 #define CTH_LAUNCHER_TO_SD_DELTA (CTH_SD_RAW_ADDRESS - CTH_NAND_RAW_ADDRESS)
 #define CTH_REQUEST_MAGIC 0x53544843
 #define CTH_REQUEST_VERSION 3
-#define CTH_SORT_BUILD_VERSION "0.1.0-rc24"
+#define CTH_SORT_BUILD_VERSION "0.1.0-rc25"
 #define CTH_INLINE_FOLDER_RECORD_RECOVERY_HINT 190
 #define CTH_FRAMEWORK_BUILD_VERSION "0.7.7-multi-home"
 #define CTH_FOLDER_POSITION_OFFSET 0x11DC
@@ -136,6 +136,7 @@ static void ShowProgress(const char *stage, u32 current, u32 total)
 
 bool g_cthulhuBackgroundSort = false;
 static char g_layoutBackrefReport[12288];
+static char g_objectInventory[0x20000];
 
 static u64 ReadU64(const u8 *data, u32 offset)
 {
@@ -3158,12 +3159,116 @@ static u16 g_liveInlineOrdered[420];
 static u16 g_liveIndirectPositions[420];
 static u16 g_liveIndirectOrdered[420];
 
+static const char *InventoryNameForTitle(u64 titleId, char *name, u32 capacity)
+{
+    name[0] = 0;
+    CthRequestHeader *header = (CthRequestHeader *)g_sortRequest;
+    if (header->magic != CTH_REQUEST_MAGIC || header->entryCount > 900)
+        return "none";
+    CthRequestEntry *entries = (CthRequestEntry *)(header + 1);
+    for (u32 i = 0; i < header->entryCount; i++)
+        if (entries[i].titleId == titleId && (entries[i].flags & 1))
+        {
+            RequestTitleToAscii(&entries[i], name, capacity);
+            return "catalog";
+        }
+    return "none";
+}
+
+static void WriteVisibleObjectInventory(Handle home, u32 records,
+                                        volatile s16 *inlineMap,
+                                        u32 indirectMap)
+{
+    const u32 recordsLocal = 0x00D00000;
+    const u32 indirectLocal = 0x00F00000;
+    const u32 recordsSize = 0x3B000;
+    u32 recordsOffset = records & 0xFFF;
+    u32 indirectPage = indirectMap & ~0xFFF;
+    u32 indirectOffset = indirectMap & 0xFFF;
+    Result recordResult = records >= 0x08000000 && records < 0x40000000 ?
+        svcMapProcessMemoryEx(CUR_PROCESS_HANDLE, recordsLocal, home,
+                              records & ~0xFFF, recordsSize, 0) : (Result)-1;
+    Result indirectResult = indirectMap >= 0x08000000 && indirectMap < 0x40000000 ?
+        svcMapProcessMemoryEx(CUR_PROCESS_HANDLE, indirectLocal, home,
+                              indirectPage, 0x2000, 0) : (Result)-1;
+    int length = sprintf(g_objectInventory,
+        "LumaHome visible object inventory\n"
+        "release=0.1.0-rc25\nformat=1\n"
+        "records=%08lx record_map=%08lx indirect=%08lx indirect_map=%08lx\n"
+        "columns=coordinate,inline_record,indirect_record,title_id,words2_7,word14,"
+        "sd_slot,sd_position,sd_folder,launcher_slot,launcher_position,"
+        "launcher_folder,name_source,name\n",
+        records, recordResult, indirectMap, indirectResult);
+    for (u32 coordinate = 0; coordinate < CTH_LAYOUT_SLOTS &&
+         length < (int)sizeof(g_objectInventory) - 384; coordinate++)
+    {
+        s16 inlineRecord = inlineMap[coordinate];
+        s16 indirectRecord = R_SUCCEEDED(indirectResult) ?
+            *(volatile s16 *)(indirectLocal + indirectOffset + coordinate * 2) : -1;
+        s16 record = inlineRecord >= 0 && inlineRecord < 420 ?
+                     inlineRecord : indirectRecord;
+        u64 titleId = UINT64_MAX;
+        u32 words[15] = {0};
+        if (R_SUCCEEDED(recordResult) && record >= 0 && record < 420)
+        {
+            const u32 *source = (const u32 *)(recordsLocal + recordsOffset +
+                                               record * 0x230);
+            for (u32 i = 0; i < 15; i++) words[i] = source[i];
+            titleId = ((u64)words[1] << 32) | words[0];
+        }
+        s32 sdSlot = -1, launcherSlot = -1;
+        s16 sdPosition = -1, launcherPosition = -1;
+        s8 sdFolder = -1, launcherFolder = -1;
+        if (LooksLikeTitleId(titleId))
+            for (u32 slot = 0; slot < CTH_LAYOUT_SLOTS; slot++)
+            {
+                if (ReadU64(g_sortRaw, 8 + slot * 8) == titleId)
+                {
+                    sdSlot = (s32)slot;
+                    sdPosition = ReadS16(g_sortRaw, 0xCB0 + slot * 2);
+                    sdFolder = *(s8 *)(g_sortRaw + 0xF80 + slot);
+                }
+                if (ReadU64(g_launcherRaw, 8 + slot * 8) == titleId)
+                {
+                    launcherSlot = (s32)slot;
+                    launcherPosition = ReadS16(g_launcherRaw, 0xD9A + slot * 2);
+                    launcherFolder = *(s8 *)(g_launcherRaw + 0x106A + slot);
+                }
+            }
+        char name[65];
+        const char *nameSource = InventoryNameForTitle(titleId, name,
+                                                        sizeof(name));
+        length += sprintf(g_objectInventory + length,
+            "%lu,%d,%d,%08lx%08lx,%08lx:%08lx:%08lx:%08lx:%08lx:%08lx,"
+            "%08lx,%ld,%d,%d,%ld,%d,%d,%s,%s\n",
+            (unsigned long)coordinate, inlineRecord, indirectRecord,
+            words[1], words[0], words[2], words[3], words[4], words[5],
+            words[6], words[7], words[14], (long)sdSlot, sdPosition,
+            sdFolder, (long)launcherSlot, launcherPosition, launcherFolder,
+            nameSource, name);
+    }
+    if (R_SUCCEEDED(indirectResult))
+        svcUnmapProcessMemoryEx(CUR_PROCESS_HANDLE, indirectLocal, 0x2000);
+    if (R_SUCCEEDED(recordResult))
+        svcUnmapProcessMemoryEx(CUR_PROCESS_HANDLE, recordsLocal, recordsSize);
+    IFile file = {0};
+    if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, ""),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/object-inventory-rc25.csv"),
+        FS_OPEN_CREATE | FS_OPEN_WRITE)))
+    {
+        u64 written = 0;
+        IFile_Write(&file, &written, g_objectInventory, length, FS_WRITE_FLUSH);
+        IFile_SetSize(&file, length);
+        IFile_Close(&file);
+    }
+}
+
 static u32 ScanLiveIconClassV010Rc8(Handle home)
 {
     char *report = g_layoutBackrefReport;
     int length = sprintf(report,
         "LumaHome live icon map report\n"
-        "release=0.1.0-rc24\nscan_version=2.3.1\n"
+        "release=0.1.0-rc25\nscan_version=2.4.0\n"
         "raw=%08lx\nprocessed=%08lx\n"
         "wrapper=003827d8\nrebuild_subobject=003827e4\n",
         g_lastRawAddress, g_lastProcessedAddress);
@@ -3454,6 +3559,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
                 "index_indirect=%08lx\n", headerWords[0], headerWords[1],
                 headerWords[2], headerWords[3], indirectMap);
             volatile s16 *inlineMap = (volatile s16 *)(header + 0x0E);
+            WriteVisibleObjectInventory(home, records, inlineMap, indirectMap);
             bool inlineFolderChanged = false;
             if (g_livePlannedFolderCount > 0)
             {
@@ -3780,7 +3886,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc24.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc25.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
