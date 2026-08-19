@@ -130,7 +130,7 @@ static void writeAppliedOptions(bool reverse, bool foldersFirst,
     char report[384];
     int length = sprintf(report,
         "LumaHome last applied sort options\n"
-        "release=0.1.0-rc29\n"
+        "release=0.1.0-rc30\n"
         "direction=%s\nfolder_placement=%s\ncollapse_gaps=%s\ntraversal=%s\n",
         reverse ? "Z-A" : "A-Z", foldersFirst ? "before" : "after",
         collapseGaps ? "on" : "off", rowMajor ? "row-major" : "column-major");
@@ -277,7 +277,7 @@ static void writeLifecycle(u32 pid, const char *state, Result result,
     char report[768];
     int n = sprintf(report,
         "LumaHome HOME hook lifecycle log\n"
-        "runtime_version=1.10.5\nmode=active-home-controller-v1105\n"
+        "runtime_version=1.10.6\nmode=active-home-controller-v1106\n"
         "pid=%lu\nstate=%s\nresult=%08lx\nmarker=%08lx\n"
         "heartbeat=%lu\npanel=%08lx\nframe_hook=%08lx\n"
         "expected_frame_hook=%08lx\nstub=%08lx\nrecoveries=%lu\n",
@@ -379,7 +379,7 @@ static void writeWatchdog(u32 pid, Result result, u32 marker, u32 heartbeat,
         stallSamples >= 3 ? "heartbeat-stalled" : "healthy";
     int n = sprintf(report,
         "LumaHome independent HOME watchdog\n"
-        "watchdog_version=1.10.5\nbase_overlay=V167\n"
+        "watchdog_version=1.10.6\nbase_overlay=V167\n"
         "state=%s\nresult=%08lx\n"
         "pid=%lu\npid_changes=%lu\nsamples=%lu\n"
         "marker=%08lx\nheartbeat=%lu\nprevious_heartbeat=%lu\n"
@@ -597,7 +597,7 @@ static void writeSnapshot(u32 pid, volatile u32 *v, u32 held, u32 pressed,
     char report[1800];
     int n = sprintf(report,
         "LumaHome HOME OSD automatic runtime log\n"
-        "release=0.1.0-rc29\nruntime_version=1.10.5\n"
+        "release=0.1.0-rc30\nruntime_version=1.10.6\n"
         "mode=active-home-controller-v1105\n"
         "pid=%lu\nmarker=%08lx\nmarker_ok=%u\n"
         "heartbeat=%lu\noverlay=%lu\nheld=%08lx\npressed=%08lx\n"
