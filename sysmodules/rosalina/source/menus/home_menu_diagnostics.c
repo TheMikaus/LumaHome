@@ -19,7 +19,7 @@
 #define CTH_LAUNCHER_TO_SD_DELTA (CTH_SD_RAW_ADDRESS - CTH_NAND_RAW_ADDRESS)
 #define CTH_REQUEST_MAGIC 0x53544843
 #define CTH_REQUEST_VERSION 3
-#define CTH_SORT_BUILD_VERSION "0.1.0-rc30"
+#define CTH_SORT_BUILD_VERSION "0.1.0-rc31"
 #define CTH_INLINE_FOLDER_RECORD_RECOVERY_HINT 190
 #define CTH_FRAMEWORK_BUILD_VERSION "0.7.7-multi-home"
 #define CTH_FOLDER_POSITION_OFFSET 0x11DC
@@ -1122,6 +1122,7 @@ static u32 g_lastProcessedAddress;
 static u32 g_livePlannedFolderCount = 0;
 static bool g_livePlannedFoldersFirst = true;
 static bool g_liveProbeOnly = false;
+static u16 g_liveDesiredTopLevelAt[CTH_LAYOUT_SLOTS];
 
 static Result DiscoverLauncherRuntime(Handle process, u32 preferredAddress,
                                       u32 *addressOut,
@@ -3206,7 +3207,7 @@ static void WriteVisibleObjectInventory(Handle home, u32 records,
                               indirectPage, 0x2000, 0) : (Result)-1;
     int length = sprintf(g_objectInventory,
         "LumaHome visible object inventory\n"
-        "release=0.1.0-rc30\nformat=2\n"
+        "release=0.1.0-rc31\nformat=2\n"
         "records=%08lx record_map=%08lx indirect=%08lx indirect_map=%08lx\n"
         "columns=coordinate,inline_record,indirect_record,title_id,words2_7,word14,"
         "sd_slot,sd_position,sd_folder,launcher_slot,launcher_position,"
@@ -3311,7 +3312,7 @@ static void WriteVisibleObjectInventory(Handle home, u32 records,
         svcUnmapProcessMemoryEx(CUR_PROCESS_HANDLE, recordsLocal, recordsSize);
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/object-inventory-rc30.csv"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/object-inventory-rc31.csv"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -3326,7 +3327,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     char *report = g_layoutBackrefReport;
     int length = sprintf(report,
         "LumaHome live icon map report\n"
-        "release=0.1.0-rc30\nscan_version=2.5.0\n"
+        "release=0.1.0-rc31\nscan_version=2.5.1\n"
         "raw=%08lx\nprocessed=%08lx\n"
         "wrapper=003827d8\nrebuild_subobject=003827e4\n",
         g_lastRawAddress, g_lastProcessedAddress);
@@ -3498,6 +3499,8 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
         memset(g_liveDesiredRecords, 0, sizeof(g_liveDesiredRecords));
         memset(g_liveTopLevelRecords, 0, sizeof(g_liveTopLevelRecords));
         memset(g_liveFolderRecords, 0, sizeof(g_liveFolderRecords));
+        memset(g_liveDesiredTopLevelAt, 0xFF,
+               sizeof(g_liveDesiredTopLevelAt));
         g_liveMapChanged = false;
         g_liveMapPartial = false;
         const u32 pointerAddress = iconModel + 0x398F8;
@@ -3568,8 +3571,12 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
                                 (u16)recordIndex;
                         else if (gridIndex < CTH_LAYOUT_SLOTS &&
                                  topLevelRecordCount < CTH_LAYOUT_SLOTS)
+                        {
                             g_liveTopLevelRecords[topLevelRecordCount++] =
                                 (u16)recordIndex;
+                            g_liveDesiredTopLevelAt[gridIndex] =
+                                (u16)recordIndex;
+                        }
                         if (matched < 24)
                         {
                             length += sprintf(report + length,
@@ -3783,6 +3790,34 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
                             (s16)g_liveInlineOrdered[i];
                         inlineChanged++;
                     }
+            /* The old permutation only sorted records across coordinates
+               that were already occupied by titles.  That can reorder names
+               but can never collapse a hole or move a title out of a stale
+               coordinate such as Camera at 222.  Apply the desired record to
+               its actual planned coordinate and clear only obsolete
+               top-level title records.  Non-title/package records are not
+               cleared by this pass. */
+            if (!g_liveProbeOnly)
+                for (u32 coordinate = 0;
+                     coordinate < CTH_LAYOUT_SLOTS; coordinate++)
+                {
+                    s16 desired = (s16)g_liveDesiredTopLevelAt[coordinate];
+                    s16 current = inlineMap[coordinate];
+                    bool currentIsTopLevel = false;
+                    for (u32 d = 0; d < topLevelRecordCount; d++)
+                        if (current == (s16)g_liveTopLevelRecords[d])
+                            currentIsTopLevel = true;
+                    if (desired != -1 && current != desired)
+                    {
+                        inlineMap[coordinate] = desired;
+                        inlineChanged++;
+                    }
+                    else if (desired == -1 && currentIsTopLevel)
+                    {
+                        inlineMap[coordinate] = -1;
+                        inlineChanged++;
+                    }
+                }
             g_liveMapChanged = inlineFolderChanged || inlineChanged != 0;
             g_liveMapPartial = staleFolderMembers != 0;
             if (inlineFolderChanged || inlineChanged != 0)
@@ -3916,7 +3951,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
                             break;
                         }
                 u32 indirectChanged = 0;
-                if (!g_liveProbeOnly && g_liveMapChanged && positionCount > 1 &&
+                if (!g_liveProbeOnly && positionCount > 1 &&
                     positionCount == orderedCount)
                     for (u32 i = 0; i < positionCount; i++)
                         if (indices[g_liveIndirectPositions[i]] !=
@@ -3926,6 +3961,30 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
                                 (s16)g_liveIndirectOrdered[i];
                             indirectChanged++;
                         }
+                if (!g_liveProbeOnly)
+                    for (u32 coordinate = 0;
+                         coordinate < CTH_LAYOUT_SLOTS; coordinate++)
+                    {
+                        s16 desired =
+                            (s16)g_liveDesiredTopLevelAt[coordinate];
+                        s16 current = indices[coordinate];
+                        bool currentIsTopLevel = false;
+                        for (u32 d = 0; d < topLevelRecordCount; d++)
+                            if (current == (s16)g_liveTopLevelRecords[d])
+                                currentIsTopLevel = true;
+                        if (desired != -1 && current != desired)
+                        {
+                            indices[coordinate] = desired;
+                            indirectChanged++;
+                        }
+                        else if (desired == -1 && currentIsTopLevel)
+                        {
+                            indices[coordinate] = -1;
+                            indirectChanged++;
+                        }
+                    }
+                if (indirectChanged != 0)
+                    g_liveMapChanged = true;
                 if (indirectFolderChanged || indirectChanged != 0)
                 {
                     svcFlushProcessDataCache(CUR_PROCESS_HANDLE,
@@ -3946,7 +4005,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc30.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc31.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -4034,7 +4093,7 @@ Result CthulhuHomeMenu_CaptureObjectInventory(void)
     char captureReport[512];
     int captureLength = sprintf(captureReport,
         "LumaHome read-only capture report\n"
-        "release=0.1.0-rc30\n"
+        "release=0.1.0-rc31\n"
         "sd_discovery=%08lx\nraw=%08lx\nprocessed=%08lx\n"
         "launcher_file=%08lx\nlauncher_resident=%08lx\n"
         "launcher_address=%08lx\nlauncher_matches=%lu\n"
@@ -4045,7 +4104,7 @@ Result CthulhuHomeMenu_CaptureObjectInventory(void)
     IFile captureFile = {0};
     if (R_SUCCEEDED(IFile_Open(&captureFile, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/capture-report-rc30.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/capture-report-rc31.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
