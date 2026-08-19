@@ -19,7 +19,7 @@
 #define CTH_LAUNCHER_TO_SD_DELTA (CTH_SD_RAW_ADDRESS - CTH_NAND_RAW_ADDRESS)
 #define CTH_REQUEST_MAGIC 0x53544843
 #define CTH_REQUEST_VERSION 3
-#define CTH_SORT_BUILD_VERSION "0.1.0-rc26"
+#define CTH_SORT_BUILD_VERSION "0.1.0-rc27"
 #define CTH_INLINE_FOLDER_RECORD_RECOVERY_HINT 190
 #define CTH_FRAMEWORK_BUILD_VERSION "0.7.7-multi-home"
 #define CTH_FOLDER_POSITION_OFFSET 0x11DC
@@ -3204,7 +3204,7 @@ static void WriteVisibleObjectInventory(Handle home, u32 records,
                               indirectPage, 0x2000, 0) : (Result)-1;
     int length = sprintf(g_objectInventory,
         "LumaHome visible object inventory\n"
-        "release=0.1.0-rc26\nformat=2\n"
+        "release=0.1.0-rc27\nformat=2\n"
         "records=%08lx record_map=%08lx indirect=%08lx indirect_map=%08lx\n"
         "columns=coordinate,inline_record,indirect_record,title_id,words2_7,word14,"
         "sd_slot,sd_position,sd_folder,launcher_slot,launcher_position,"
@@ -3309,7 +3309,7 @@ static void WriteVisibleObjectInventory(Handle home, u32 records,
         svcUnmapProcessMemoryEx(CUR_PROCESS_HANDLE, recordsLocal, recordsSize);
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/object-inventory-rc26.csv"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/object-inventory-rc27.csv"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -3324,7 +3324,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     char *report = g_layoutBackrefReport;
     int length = sprintf(report,
         "LumaHome live icon map report\n"
-        "release=0.1.0-rc26\nscan_version=2.4.1\n"
+        "release=0.1.0-rc27\nscan_version=2.4.2\n"
         "raw=%08lx\nprocessed=%08lx\n"
         "wrapper=003827d8\nrebuild_subobject=003827e4\n",
         g_lastRawAddress, g_lastProcessedAddress);
@@ -3942,7 +3942,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc26.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc27.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -3951,6 +3951,44 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
         IFile_Close(&file);
     }
     return iconOwner;
+}
+
+Result CthulhuHomeMenu_CaptureObjectInventory(void)
+{
+    Handle home = 0;
+    u32 pid = 0;
+    Result res = OpenUsaHomeMenu(&home, &pid);
+    if (R_FAILED(res)) return res;
+    res = svcControlProcess(home, PROCESSOP_SCHEDULE_THREADS, 1, 0);
+    if (R_SUCCEEDED(res)) res = ReadSdSaveData();
+    if (R_SUCCEEDED(res) && !BuildSdGridFromRaw(g_sortRaw, g_sortGrid))
+        res = (Result)-121;
+    if (R_SUCCEEDED(res)) res = ReadCurrentLauncherData();
+    u16 launcherUsed = 0;
+    if (R_SUCCEEDED(res) && !ValidateLayout(g_launcherRaw, true, &launcherUsed))
+        res = (Result)-122;
+    if (R_SUCCEEDED(res))
+        for (u32 slot = 0; slot < CTH_LAYOUT_SLOTS; slot++)
+        {
+            u64 titleId = ReadU64(g_launcherRaw, 8 + slot * 8);
+            s16 position = ReadS16(g_launcherRaw, 0xD9A + slot * 2);
+            s8 folder = *(s8 *)(g_launcherRaw + 0x106A + slot);
+            if (LooksLikeTitleId(titleId) && folder == -1 && position >= 0 &&
+                position < CTH_LAYOUT_SLOTS &&
+                g_sortGrid[position] == UINT64_MAX)
+                g_sortGrid[position] = titleId;
+        }
+    if (R_SUCCEEDED(res))
+    {
+        g_liveProbeOnly = true;
+        g_livePlannedFolderCount = 0;
+        (void)ScanLiveIconClassV010Rc8(home);
+        g_liveProbeOnly = false;
+    }
+    Result unlock = svcControlProcess(home, PROCESSOP_SCHEDULE_THREADS, 0, 0);
+    if (R_SUCCEEDED(res) && R_FAILED(unlock)) res = unlock;
+    svcCloseHandle(home);
+    return res;
 }
 
 Result CthulhuHomeMenu_RunBackgroundSort(u16 selectedAlgorithm,

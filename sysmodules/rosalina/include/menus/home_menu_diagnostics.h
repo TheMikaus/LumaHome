@@ -11,6 +11,7 @@ void CthulhuHomeMenu_RefreshCatalog(void);
 void CthulhuHomeMenu_Search(void);
 void CthulhuHomeMenu_HandleShutdownNotification(u32 notificationId);
 void CthulhuHomeMenu_WritePersistenceAudit(void);
+Result CthulhuHomeMenu_CaptureObjectInventory(void);
 Result CthulhuHomeMenu_RunBackgroundSort(u16 selectedAlgorithm,
                                          bool foldersFirst,
                                          bool collapseGaps,

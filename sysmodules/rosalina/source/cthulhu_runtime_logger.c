@@ -26,7 +26,8 @@
 #define CTH_RECOVERY_CHANNEL_LOCAL 0x00700000
 #define CTH_RECOVERY_PANEL_LOCAL 0x00800000
 
-enum { CTH_IDLE, CTH_APPLYING, CTH_SUCCESS, CTH_FAILED, CTH_DEFERRED };
+enum { CTH_IDLE, CTH_APPLYING, CTH_SUCCESS, CTH_FAILED, CTH_DEFERRED,
+       CTH_CAPTURED };
 
 #define CTH_SETTINGS_MAGIC 0x53484D4C
 #define CTH_SETTINGS_VERSION 1
@@ -129,7 +130,7 @@ static void writeAppliedOptions(bool reverse, bool foldersFirst,
     char report[384];
     int length = sprintf(report,
         "LumaHome last applied sort options\n"
-        "release=0.1.0-rc26\n"
+        "release=0.1.0-rc27\n"
         "direction=%s\nfolder_placement=%s\ncollapse_gaps=%s\ntraversal=%s\n",
         reverse ? "Z-A" : "A-Z", foldersFirst ? "before" : "after",
         collapseGaps ? "on" : "off", rowMajor ? "row-major" : "column-major");
@@ -276,7 +277,7 @@ static void writeLifecycle(u32 pid, const char *state, Result result,
     char report[768];
     int n = sprintf(report,
         "LumaHome HOME hook lifecycle log\n"
-        "runtime_version=1.10.2\nmode=active-home-controller-v1102\n"
+        "runtime_version=1.10.3\nmode=active-home-controller-v1103\n"
         "pid=%lu\nstate=%s\nresult=%08lx\nmarker=%08lx\n"
         "heartbeat=%lu\npanel=%08lx\nframe_hook=%08lx\n"
         "expected_frame_hook=%08lx\nstub=%08lx\nrecoveries=%lu\n",
@@ -378,7 +379,7 @@ static void writeWatchdog(u32 pid, Result result, u32 marker, u32 heartbeat,
         stallSamples >= 3 ? "heartbeat-stalled" : "healthy";
     int n = sprintf(report,
         "LumaHome independent HOME watchdog\n"
-        "watchdog_version=1.10.2\nbase_overlay=V167\n"
+        "watchdog_version=1.10.3\nbase_overlay=V167\n"
         "state=%s\nresult=%08lx\n"
         "pid=%lu\npid_changes=%lu\nsamples=%lu\n"
         "marker=%08lx\nheartbeat=%lu\nprevious_heartbeat=%lu\n"
@@ -406,7 +407,7 @@ static void writeWatchdog(u32 pid, Result result, u32 marker, u32 heartbeat,
                      watchdogHomeMarkers[i], i, watchdogHomeHeartbeats[i]);
     IFile file;
     Result open = IFile_Open(&file, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/Cthulhu/watchdog-v1102.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/Cthulhu/watchdog-v1103.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE);
     if (R_SUCCEEDED(open))
     {
@@ -538,7 +539,7 @@ static void renderMenu(u8 *panel, u32 selection, bool reverse,
                        Result result, u32 mutations)
 {
     memset(panel, 0x20, CTH_PANEL_SIZE);
-    drawText(panel, 5, 8, "LUMAHOME 0.1 RC26", false);
+    drawText(panel, 5, 8, "LUMAHOME 0.1 RC27", false);
     drawText(panel, 5, 27, selection == 0 ? "> DIRECTION" : "  DIRECTION", selection == 0);
     drawText(panel, 5, 40, reverse ? "  Z-A" : "  A-Z", selection == 0);
     drawText(panel, 5, 58, selection == 1 ? "> FOLDER PLACEMENT" : "  FOLDER PLACEMENT", selection == 1);
@@ -547,8 +548,8 @@ static void renderMenu(u8 *panel, u32 selection, bool reverse,
     drawText(panel, 5, 102, collapseGaps ? "  ON" : "  OFF", selection == 2);
     drawText(panel, 5, 116, selection == 3 ? "> TRAVERSAL" : "  TRAVERSAL", selection == 3);
     drawText(panel, 5, 129, rowMajor ? "  ROW: RIGHT/DOWN" : "  COLUMN: DOWN/RIGHT", selection == 3);
-    drawText(panel, 5, 149, "UD FIELD  LR CHANGE", false);
-    drawText(panel, 5, 162, "A APPLY  L+Y CLOSE", false);
+    drawText(panel, 5, 149, "X CAPTURE  A APPLY", false);
+    drawText(panel, 5, 162, "L+Y CLOSE", false);
     if (state == CTH_APPLYING)
         drawText(panel, 5, 178, "APPLYING...", false);
     else if (state == CTH_SUCCESS)
@@ -572,6 +573,11 @@ static void renderMenu(u8 *panel, u32 selection, bool reverse,
         drawText(panel, 5, 191, "FOLDER MODEL STALE", false);
         drawText(panel, 5, 204, "REOPEN HOME", false);
     }
+    else if (state == CTH_CAPTURED)
+    {
+        drawText(panel, 5, 178, "INVENTORY SAVED", false);
+        drawText(panel, 5, 191, "NO SORT APPLIED", false);
+    }
 }
 
 static void flushShared(Handle process, u32 panelAddress)
@@ -591,8 +597,8 @@ static void writeSnapshot(u32 pid, volatile u32 *v, u32 held, u32 pressed,
     char report[1800];
     int n = sprintf(report,
         "LumaHome HOME OSD automatic runtime log\n"
-        "release=0.1.0-rc26\nruntime_version=1.10.2\n"
-        "mode=active-home-controller-v1102\n"
+        "release=0.1.0-rc27\nruntime_version=1.10.3\n"
+        "mode=active-home-controller-v1103\n"
         "pid=%lu\nmarker=%08lx\nmarker_ok=%u\n"
         "heartbeat=%lu\noverlay=%lu\nheld=%08lx\npressed=%08lx\n"
         "selection=%lu\ndirection=%s\nfolder_placement=%s\ncollapse_gaps=%s\ntraversal=%s\n"
@@ -779,6 +785,17 @@ static void runtimeMain(void)
                     (void)algorithm;
                     state = R_FAILED(sortResult) ? CTH_FAILED :
                             channel[0x108 / 4] ? CTH_DEFERRED : CTH_SUCCESS;
+                    redraw = true;
+                }
+                else if (pressed & KEY_X)
+                {
+                    state = CTH_APPLYING;
+                    renderMenu(panel, selection, reverse, foldersFirst,
+                               collapseGaps, rowMajor, state, 0, 0);
+                    flushShared(process, panelAddress);
+                    sortResult = CthulhuHomeMenu_CaptureObjectInventory();
+                    mutations = 0;
+                    state = R_FAILED(sortResult) ? CTH_FAILED : CTH_CAPTURED;
                     redraw = true;
                 }
             }
