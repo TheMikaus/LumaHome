@@ -19,7 +19,7 @@
 #define CTH_LAUNCHER_TO_SD_DELTA (CTH_SD_RAW_ADDRESS - CTH_NAND_RAW_ADDRESS)
 #define CTH_REQUEST_MAGIC 0x53544843
 #define CTH_REQUEST_VERSION 3
-#define CTH_SORT_BUILD_VERSION "0.1.0-rc31"
+#define CTH_SORT_BUILD_VERSION "0.1.0-rc32"
 #define CTH_INLINE_FOLDER_RECORD_RECOVERY_HINT 190
 #define CTH_FRAMEWORK_BUILD_VERSION "0.7.7-multi-home"
 #define CTH_FOLDER_POSITION_OFFSET 0x11DC
@@ -1105,6 +1105,7 @@ void CthulhuHomeMenu_CheckStaticHook(void)
 
 static u8 g_sortRequest[0x20000];
 static u8 g_sortRaw[CTH_SD_LAYOUT_SIZE];
+static u8 g_liveRaw[CTH_SD_LAYOUT_SIZE];
 static u8 g_sortOriginal[CTH_SD_LAYOUT_SIZE];
 static u8 g_sortCommitted[CTH_SD_LAYOUT_SIZE];
 static u8 g_launcherRaw[CTH_LAUNCHER_SIZE];
@@ -1123,6 +1124,8 @@ static u32 g_livePlannedFolderCount = 0;
 static bool g_livePlannedFoldersFirst = true;
 static bool g_liveProbeOnly = false;
 static u16 g_liveDesiredTopLevelAt[CTH_LAYOUT_SLOTS];
+static s16 g_liveTitlePositions[CTH_LAYOUT_SLOTS];
+static s16 g_liveFolderPositions[CTH_FOLDER_COUNT];
 
 static Result DiscoverLauncherRuntime(Handle process, u32 preferredAddress,
                                       u32 *addressOut,
@@ -2828,6 +2831,15 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
             res = (Result)-26;
     }
 
+    /* Defaults for legacy title-only callers.  The folder-aware path below
+       replaces these with the final merged coordinates before persistence is
+       regrouped. */
+    if (R_SUCCEEDED(res))
+    {
+        memcpy(g_liveRaw, g_sortRaw, sizeof(g_liveRaw));
+        for (u32 i = 0; i < mutationCount; i++)
+            g_liveTitlePositions[i] = g_sortMutations[i].newPosition;
+    }
     u32 folderCount = 0;
     u32 topLevelTitleCount = 0;
     if (R_SUCCEEDED(res) && stageFolders &&
@@ -3004,6 +3016,96 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
                 else
                     g_sortGrid[position] = titleId;
             }
+
+        /* g_sortGrid now holds the desired merged live layout.  Save those
+           coordinates, then rewrite the two backing stores as contiguous
+           media groups.  HOME merges SaveData and Launcher.dat itself during
+           boot; persisting one interleaved coordinate stream into both files
+           leaves holes in SaveData and reconstructs trailing titles as gifts. */
+        if (R_SUCCEEDED(res))
+        {
+            memcpy(g_liveRaw, g_sortRaw, sizeof(g_liveRaw));
+            for (u32 i = 0; i < mutationCount; i++)
+                g_liveTitlePositions[i] = g_sortMutations[i].newPosition;
+            for (u32 i = 0; i < folderCount; i++)
+                g_liveFolderPositions[i] = g_folderMutations[i].newPosition;
+
+            u32 topLauncherCount = 0, topSdCount = 0;
+            for (u32 i = 0; i < mutationCount; i++)
+                if (g_sortMutations[i].folder == -1)
+                {
+                    if (g_sortMutations[i].mediaType == 0)
+                        topLauncherCount++;
+                    else
+                        topSdCount++;
+                }
+            u32 combinedCount = topLauncherCount + topSdCount + folderCount;
+            if (combinedCount > CTH_LAYOUT_SLOTS)
+                res = (Result)-124;
+
+            u32 folderBase = foldersFirst ? 0 :
+                             topLauncherCount + topSdCount;
+            u32 launcherBase = foldersFirst ? folderCount : 0;
+            u32 sdBase = launcherBase + topLauncherCount;
+            u32 launcherIndex = 0, sdIndex = 0;
+            for (u32 i = 0; R_SUCCEEDED(res) && i < mutationCount; i++)
+            {
+                CthSdMutation *mutation = &g_sortMutations[i];
+                if (mutation->folder != -1)
+                    continue;
+                u32 logical = mutation->mediaType == 0 ?
+                    launcherBase + launcherIndex++ : sdBase + sdIndex++;
+                mutation->newPosition = CompactTraversalPosition(
+                    logical, combinedCount, 0, homeRows, rowMajor);
+            }
+            for (u32 sorted = 0; R_SUCCEEDED(res) && sorted < folderCount;
+                 sorted++)
+            {
+                u8 id = folderIds[sorted];
+                for (u32 f = 0; f < folderCount; f++)
+                    if (g_folderMutations[f].id == id)
+                        g_folderMutations[f].newPosition =
+                            CompactTraversalPosition(folderBase + sorted,
+                                                     combinedCount, 0,
+                                                     homeRows, rowMajor);
+            }
+
+            bool occupied[CTH_LAYOUT_SLOTS] = {false};
+            for (u32 i = 0; R_SUCCEEDED(res) && i < mutationCount; i++)
+            {
+                CthSdMutation *mutation = &g_sortMutations[i];
+                if (mutation->folder == -1)
+                {
+                    if (mutation->newPosition < 0 ||
+                        mutation->newPosition >= CTH_LAYOUT_SLOTS ||
+                        occupied[mutation->newPosition])
+                        res = (Result)-125;
+                    else
+                        occupied[mutation->newPosition] = true;
+                }
+                u8 *target = mutation->mediaType == 0 ?
+                             g_launcherRaw : g_sortRaw;
+                u32 offset = mutation->mediaType == 0 ? 0xD9A : 0xCB0;
+                memcpy(target + offset + mutation->slot * 2,
+                       &mutation->newPosition, 2);
+            }
+            for (u32 i = 0; R_SUCCEEDED(res) && i < folderCount; i++)
+            {
+                s16 position = g_folderMutations[i].newPosition;
+                if (position < 0 || position >= CTH_LAYOUT_SLOTS ||
+                    occupied[position])
+                    res = (Result)-126;
+                else
+                    occupied[position] = true;
+                memcpy(g_launcherRaw + CTH_FOLDER_POSITION_OFFSET +
+                       g_folderMutations[i].id * 2, &position, 2);
+            }
+            g_sortDetailsLength += sprintf(g_sortDetails + g_sortDetailsLength,
+                "[PERSISTENCE_SPLIT]\nlauncher_top=%lu sd_top=%lu folders=%lu "
+                "combined=%lu mode=media-grouped-dense result=%08lx\n\n",
+                (unsigned long)topLauncherCount, (unsigned long)topSdCount,
+                (unsigned long)folderCount, (unsigned long)combinedCount, res);
+        }
     }
 
     g_sortDetailsLength += sprintf(g_sortDetails + g_sortDetailsLength,
@@ -3012,9 +3114,11 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
         (unsigned long)topLevelTitleCount);
     for (u32 i = 0; i < folderCount; i++)
         g_sortDetailsLength += sprintf(g_sortDetails + g_sortDetailsLength,
-            "folder=%u number=%lu old=%d new=%d\n", g_folderMutations[i].id,
+            "folder=%u number=%lu old=%d live=%d persist=%d\n",
+            g_folderMutations[i].id,
             (unsigned long)g_folderMutations[i].number,
-            g_folderMutations[i].oldPosition, g_folderMutations[i].newPosition);
+            g_folderMutations[i].oldPosition, g_liveFolderPositions[i],
+            g_folderMutations[i].newPosition);
     g_sortDetailsLength += sprintf(g_sortDetails + g_sortDetailsLength,
                                    "\n[TITLES]\n");
     for (u32 i = 0; i < mutationCount; i++)
@@ -3036,9 +3140,11 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
             break;
         }
         g_sortDetailsLength += sprintf(g_sortDetails + g_sortDetailsLength,
-            "slot=%u folder=%d old=%d new=%d title=%016llx name=%s\n",
+            "slot=%u folder=%d old=%d live=%d persist=%d "
+            "title=%016llx name=%s\n",
             g_sortMutations[i].slot, g_sortMutations[i].folder,
-            g_sortMutations[i].oldPosition, g_sortMutations[i].newPosition,
+            g_sortMutations[i].oldPosition, g_liveTitlePositions[i],
+            g_sortMutations[i].newPosition,
             titleId, title);
     }
     ShowProgress("Backing up SaveData.dat", 3, 7);
@@ -3106,7 +3212,7 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
     WriteSortJournal("update-live-buffers", (Result)-1);
     if (R_SUCCEEDED(res))
     {
-        memcpy((void *)rawAddress, g_sortRaw, sizeof(g_sortRaw));
+        memcpy((void *)rawAddress, g_liveRaw, sizeof(g_liveRaw));
         memcpy((void *)processedAddress, g_sortGrid, sizeof(g_sortGrid));
         u32 liveFolderWrites = 0;
         for (u32 i = 0; stageFolders && i < folderCount; i++)
@@ -3115,8 +3221,8 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
                          g_folderMutations[i].id * 2;
             volatile s16 *livePosition = (volatile s16 *)(launcherAddress +
                                                           offset);
-            *livePosition = g_folderMutations[i].newPosition;
-            if (*livePosition != g_folderMutations[i].newPosition)
+            *livePosition = g_liveFolderPositions[i];
+            if (*livePosition != g_liveFolderPositions[i])
             {
                 res = (Result)-106;
                 break;
@@ -3129,8 +3235,8 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
                 u32 offset = 0xD9A - 8 + g_sortMutations[i].slot * 2;
                 volatile s16 *livePosition =
                     (volatile s16 *)(launcherAddress + offset);
-                *livePosition = g_sortMutations[i].newPosition;
-                if (*livePosition != g_sortMutations[i].newPosition)
+                *livePosition = g_liveTitlePositions[i];
+                if (*livePosition != g_liveTitlePositions[i])
                     res = (Result)-120;
                 else
                     liveFolderWrites++;
@@ -3207,7 +3313,7 @@ static void WriteVisibleObjectInventory(Handle home, u32 records,
                               indirectPage, 0x2000, 0) : (Result)-1;
     int length = sprintf(g_objectInventory,
         "LumaHome visible object inventory\n"
-        "release=0.1.0-rc31\nformat=2\n"
+        "release=0.1.0-rc32\nformat=2\n"
         "records=%08lx record_map=%08lx indirect=%08lx indirect_map=%08lx\n"
         "columns=coordinate,inline_record,indirect_record,title_id,words2_7,word14,"
         "sd_slot,sd_position,sd_folder,launcher_slot,launcher_position,"
@@ -3312,7 +3418,7 @@ static void WriteVisibleObjectInventory(Handle home, u32 records,
         svcUnmapProcessMemoryEx(CUR_PROCESS_HANDLE, recordsLocal, recordsSize);
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/object-inventory-rc31.csv"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/object-inventory-rc32.csv"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -3327,7 +3433,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     char *report = g_layoutBackrefReport;
     int length = sprintf(report,
         "LumaHome live icon map report\n"
-        "release=0.1.0-rc31\nscan_version=2.5.1\n"
+        "release=0.1.0-rc32\nscan_version=2.6.0\n"
         "raw=%08lx\nprocessed=%08lx\n"
         "wrapper=003827d8\nrebuild_subobject=003827e4\n",
         g_lastRawAddress, g_lastProcessedAddress);
@@ -3631,7 +3737,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
             if (g_livePlannedFolderCount > 0)
             {
                 s16 oldPosition = g_folderMutations[0].oldPosition;
-                s16 newPosition = g_folderMutations[0].newPosition;
+                s16 newPosition = g_liveFolderPositions[0];
                 s16 sourcePosition = oldPosition;
                 s16 candidate = sourcePosition >= 0 && sourcePosition < 420 ?
                     inlineMap[sourcePosition] : -1;
@@ -3850,7 +3956,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
                 if (g_livePlannedFolderCount > 0)
                 {
                     s16 oldPosition = g_folderMutations[0].oldPosition;
-                    s16 newPosition = g_folderMutations[0].newPosition;
+                    s16 newPosition = g_liveFolderPositions[0];
                     s16 candidate = oldPosition >= 0 && oldPosition < 420 ?
                         indices[oldPosition] : -1;
                     u32 occurrences = 0, isTitle = 0, isFolderMember = 0;
@@ -4005,7 +4111,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc31.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc32.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -4093,7 +4199,7 @@ Result CthulhuHomeMenu_CaptureObjectInventory(void)
     char captureReport[512];
     int captureLength = sprintf(captureReport,
         "LumaHome read-only capture report\n"
-        "release=0.1.0-rc31\n"
+        "release=0.1.0-rc32\n"
         "sd_discovery=%08lx\nraw=%08lx\nprocessed=%08lx\n"
         "launcher_file=%08lx\nlauncher_resident=%08lx\n"
         "launcher_address=%08lx\nlauncher_matches=%lu\n"
@@ -4104,7 +4210,7 @@ Result CthulhuHomeMenu_CaptureObjectInventory(void)
     IFile captureFile = {0};
     if (R_SUCCEEDED(IFile_Open(&captureFile, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/capture-report-rc31.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/capture-report-rc32.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
