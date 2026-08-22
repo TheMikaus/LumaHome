@@ -19,7 +19,7 @@
 #define CTH_LAUNCHER_TO_SD_DELTA (CTH_SD_RAW_ADDRESS - CTH_NAND_RAW_ADDRESS)
 #define CTH_REQUEST_MAGIC 0x53544843
 #define CTH_REQUEST_VERSION 3
-#define CTH_SORT_BUILD_VERSION "0.1.0-rc41"
+#define CTH_SORT_BUILD_VERSION "0.1.0-rc42"
 #define CTH_INLINE_FOLDER_RECORD_RECOVERY_HINT 190
 #define CTH_FRAMEWORK_BUILD_VERSION "0.7.7-multi-home"
 #define CTH_FOLDER_POSITION_OFFSET 0x11DC
@@ -1981,7 +1981,6 @@ static void SortPositionsForTraversal(s16 *positions, u32 count, s16 origin,
 static s16 CompactTraversalPosition(u32 rank, u32 count, s16 origin,
                                     u32 rows, bool rowMajor)
 {
-    (void)count;
     if (!rowMajor) return (s16)(origin + rank);
     /* The visible HOME viewport grows by one column at each zoom step:
        3 rows show 5 columns, 4 show 6, and 5 show 7. Wrap within that current
@@ -1989,10 +1988,15 @@ static s16 CompactTraversalPosition(u32 rank, u32 count, s16 origin,
     u32 columns = rows + 2;
     u32 pageCapacity = rows * columns;
     u32 page = rank / pageCapacity;
-    u32 within = rank % pageCapacity;
-    u32 row = within / columns;
-    u32 column = within % columns;
-    return (s16)(origin + page * pageCapacity + column * rows + row);
+    u32 pageStart = page * pageCapacity;
+    u32 within = rank - pageStart;
+    u32 remaining = count > pageStart ? count - pageStart : 0;
+    u32 pageColumns = remaining < pageCapacity
+        ? (remaining + rows - 1) / rows : columns;
+    if (pageColumns == 0) pageColumns = 1;
+    u32 row = within / pageColumns;
+    u32 column = within % pageColumns;
+    return (s16)(origin + pageStart + column * rows + row);
 }
 
 static u16 FoldRequestCharacter(u16 value)
@@ -3390,7 +3394,7 @@ static void WriteVisibleObjectInventory(Handle home, u32 records,
             indirectLocal, home, indirectPage, 0x2000, 0);
     int length = sprintf(g_objectInventory,
         "LumaHome visible object inventory\n"
-        "release=0.1.0-rc41\nformat=2\n"
+        "release=0.1.0-rc42\nformat=2\n"
         "records=%08lx record_map=%08lx indirect=%08lx indirect_map=%08lx\n"
         "columns=coordinate,inline_record,indirect_record,title_id,words2_7,word14,"
         "sd_slot,sd_position,sd_folder,launcher_slot,launcher_position,"
@@ -3495,7 +3499,7 @@ static void WriteVisibleObjectInventory(Handle home, u32 records,
         svcUnmapProcessMemoryEx(CUR_PROCESS_HANDLE, recordsLocal, recordsSize);
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/object-inventory-rc41.csv"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/object-inventory-rc42.csv"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -3510,7 +3514,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     char *report = g_layoutBackrefReport;
     int length = sprintf(report,
         "LumaHome live icon map report\n"
-        "release=0.1.0-rc41\nscan_version=2.10.0\n"
+        "release=0.1.0-rc42\nscan_version=2.10.1\n"
         "raw=%08lx\nprocessed=%08lx\n"
         "wrapper=003827d8\nrebuild_subobject=003827e4\n",
         g_lastRawAddress, g_lastProcessedAddress);
@@ -4278,7 +4282,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc41.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc42.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -4366,7 +4370,7 @@ Result CthulhuHomeMenu_CaptureObjectInventory(void)
     char captureReport[512];
     int captureLength = sprintf(captureReport,
         "LumaHome read-only capture report\n"
-        "release=0.1.0-rc41\n"
+        "release=0.1.0-rc42\n"
         "sd_discovery=%08lx\nraw=%08lx\nprocessed=%08lx\n"
         "launcher_file=%08lx\nlauncher_resident=%08lx\n"
         "launcher_address=%08lx\nlauncher_matches=%lu\n"
@@ -4377,7 +4381,7 @@ Result CthulhuHomeMenu_CaptureObjectInventory(void)
     IFile captureFile = {0};
     if (R_SUCCEEDED(IFile_Open(&captureFile, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/capture-report-rc41.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/capture-report-rc42.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
