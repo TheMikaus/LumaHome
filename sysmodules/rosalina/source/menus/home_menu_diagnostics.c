@@ -19,8 +19,7 @@
 #define CTH_LAUNCHER_TO_SD_DELTA (CTH_SD_RAW_ADDRESS - CTH_NAND_RAW_ADDRESS)
 #define CTH_REQUEST_MAGIC 0x53544843
 #define CTH_REQUEST_VERSION 3
-#define CTH_SORT_BUILD_VERSION "0.1.0-rc40"
-#define CTH_HOME_PAGE_SLOTS 60
+#define CTH_SORT_BUILD_VERSION "0.1.0-rc41"
 #define CTH_INLINE_FOLDER_RECORD_RECOVERY_HINT 190
 #define CTH_FRAMEWORK_BUILD_VERSION "0.7.7-multi-home"
 #define CTH_FOLDER_POSITION_OFFSET 0x11DC
@@ -1955,10 +1954,11 @@ static u32 TraversalKey(s16 position, s16 origin, u32 rows, bool rowMajor)
 {
     u32 relative = (u32)(position - origin);
     if (!rowMajor) return relative;
-    u32 columns = CTH_HOME_PAGE_SLOTS / rows;
-    u32 page = relative / CTH_HOME_PAGE_SLOTS;
-    u32 within = relative % CTH_HOME_PAGE_SLOTS;
-    return page * CTH_HOME_PAGE_SLOTS +
+    u32 columns = rows + 2;
+    u32 pageCapacity = rows * columns;
+    u32 page = relative / pageCapacity;
+    u32 within = relative % pageCapacity;
+    return page * pageCapacity +
            (within % rows) * columns + within / rows;
 }
 
@@ -1983,17 +1983,16 @@ static s16 CompactTraversalPosition(u32 rank, u32 count, s16 origin,
 {
     (void)count;
     if (!rowMajor) return (s16)(origin + rank);
-    /* HOME stores 60 cells per layout page. The selected row count determines
-       that page's column count (for example 5x12). Wrap row-major ordering at
-       each 60-cell page instead of treating the entire 360-cell strip as one
-       enormous row. */
-    u32 columns = CTH_HOME_PAGE_SLOTS / rows;
+    /* The visible HOME viewport grows by one column at each zoom step:
+       3 rows show 5 columns, 4 show 6, and 5 show 7. Wrap within that current
+       viewport, then continue with the next horizontal viewport. */
+    u32 columns = rows + 2;
     u32 pageCapacity = rows * columns;
     u32 page = rank / pageCapacity;
     u32 within = rank % pageCapacity;
     u32 row = within / columns;
     u32 column = within % columns;
-    return (s16)(origin + page * CTH_HOME_PAGE_SLOTS + column * rows + row);
+    return (s16)(origin + page * pageCapacity + column * rows + row);
 }
 
 static u16 FoldRequestCharacter(u16 value)
@@ -3391,7 +3390,7 @@ static void WriteVisibleObjectInventory(Handle home, u32 records,
             indirectLocal, home, indirectPage, 0x2000, 0);
     int length = sprintf(g_objectInventory,
         "LumaHome visible object inventory\n"
-        "release=0.1.0-rc40\nformat=2\n"
+        "release=0.1.0-rc41\nformat=2\n"
         "records=%08lx record_map=%08lx indirect=%08lx indirect_map=%08lx\n"
         "columns=coordinate,inline_record,indirect_record,title_id,words2_7,word14,"
         "sd_slot,sd_position,sd_folder,launcher_slot,launcher_position,"
@@ -3496,7 +3495,7 @@ static void WriteVisibleObjectInventory(Handle home, u32 records,
         svcUnmapProcessMemoryEx(CUR_PROCESS_HANDLE, recordsLocal, recordsSize);
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/object-inventory-rc40.csv"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/object-inventory-rc41.csv"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -3511,7 +3510,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     char *report = g_layoutBackrefReport;
     int length = sprintf(report,
         "LumaHome live icon map report\n"
-        "release=0.1.0-rc40\nscan_version=2.9.0\n"
+        "release=0.1.0-rc41\nscan_version=2.10.0\n"
         "raw=%08lx\nprocessed=%08lx\n"
         "wrapper=003827d8\nrebuild_subobject=003827e4\n",
         g_lastRawAddress, g_lastProcessedAddress);
@@ -3522,8 +3521,40 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     u32 wrapperRefs = 0, rebuildRefs = 0;
     u32 classRefs = 0, functionRefs = 0;
     u32 iconOwner = 0, iconModel = 0;
+    u32 fastPath = 0;
     u32 wrapperRefAddresses[16] = {0};
-    while (address < 0x40000000 &&
+
+    /* This USA HOME build exposes a stable owner signature. Validate both the
+       function field and the complete model mutation span before trusting it;
+       fall back to discovery whenever HOME was relaunched or it differs. */
+    const u32 knownOwner = 0x08032918;
+    const u32 knownOwnerPage = knownOwner & ~0xFFF;
+    Result fastResult = ValidateRemoteSpan(home, knownOwner, 0x12C,
+                                           MEMPERM_READ, NULL);
+    if (R_SUCCEEDED(fastResult))
+        fastResult = ValidateRemoteSpan(home, knownOwnerPage, 0x1000,
+                                        MEMPERM_READ, NULL);
+    if (R_SUCCEEDED(fastResult))
+        fastResult = svcMapProcessMemoryEx(CUR_PROCESS_HANDLE, localWindow,
+            home, knownOwnerPage, 0x1000, 0);
+    if (R_SUCCEEDED(fastResult))
+    {
+        const volatile u32 *owner = (const volatile u32 *)(localWindow +
+            (knownOwner & 0xFFF));
+        u32 candidateModel = owner[0x128 / 4];
+        if (owner[0x120 / 4] == 0x001CA504 &&
+            R_SUCCEEDED(ValidateRemoteSpan(home, candidateModel,
+                0x44500 + 0x0E + 420 * sizeof(s16),
+                MEMPERM_READ | MEMPERM_WRITE, NULL)))
+        {
+            iconOwner = knownOwner;
+            iconModel = candidateModel;
+            fastPath = 1;
+        }
+        svcUnmapProcessMemoryEx(CUR_PROCESS_HANDLE, localWindow, 0x1000);
+    }
+
+    while (iconModel == 0 && address < 0x40000000 &&
            rawRefs + gridRefs + wrapperRefs + rebuildRefs +
            classRefs + functionRefs < 96)
     {
@@ -3617,7 +3648,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     }
     u32 ownerRefs = 0;
     address = 0x08000000;
-    while (address < 0x40000000 && ownerRefs < 64 &&
+    while (iconModel == 0 && address < 0x40000000 && ownerRefs < 64 &&
            length < (int)sizeof(g_layoutBackrefReport) - 256)
     {
         MemInfo mem = {0}; PageInfo page = {0};
@@ -3666,12 +3697,14 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
         "regions=%lu\nwords=%lu\nraw_refs=%lu\ngrid_refs=%lu\n"
         "wrapper_refs=%lu\nrebuild_refs=%lu\nclass_refs=%lu\n"
         "function_refs=%lu\nowner_refs=%lu\n"
+        "fast_path=%lu fast_result=%08lx\n"
         "icon_owner=%08lx\nicon_model=%08lx\n",
         (unsigned long)regions, (unsigned long)words,
         (unsigned long)rawRefs, (unsigned long)gridRefs,
         (unsigned long)wrapperRefs, (unsigned long)rebuildRefs,
         (unsigned long)classRefs, (unsigned long)functionRefs,
-        (unsigned long)ownerRefs, iconOwner, iconModel);
+        (unsigned long)ownerRefs, (unsigned long)fastPath, fastResult,
+        iconOwner, iconModel);
     if (iconModel != 0)
     {
         u32 matchedGrid[24] = {0};
@@ -4245,7 +4278,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc40.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc41.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -4333,7 +4366,7 @@ Result CthulhuHomeMenu_CaptureObjectInventory(void)
     char captureReport[512];
     int captureLength = sprintf(captureReport,
         "LumaHome read-only capture report\n"
-        "release=0.1.0-rc40\n"
+        "release=0.1.0-rc41\n"
         "sd_discovery=%08lx\nraw=%08lx\nprocessed=%08lx\n"
         "launcher_file=%08lx\nlauncher_resident=%08lx\n"
         "launcher_address=%08lx\nlauncher_matches=%lu\n"
@@ -4344,7 +4377,7 @@ Result CthulhuHomeMenu_CaptureObjectInventory(void)
     IFile captureFile = {0};
     if (R_SUCCEEDED(IFile_Open(&captureFile, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/capture-report-rc40.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/capture-report-rc41.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
