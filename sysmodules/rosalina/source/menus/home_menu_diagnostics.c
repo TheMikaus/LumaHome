@@ -19,7 +19,7 @@
 #define CTH_LAUNCHER_TO_SD_DELTA (CTH_SD_RAW_ADDRESS - CTH_NAND_RAW_ADDRESS)
 #define CTH_REQUEST_MAGIC 0x53544843
 #define CTH_REQUEST_VERSION 3
-#define CTH_SORT_BUILD_VERSION "0.1.0-rc34"
+#define CTH_SORT_BUILD_VERSION "0.1.0-rc35"
 #define CTH_INLINE_FOLDER_RECORD_RECOVERY_HINT 190
 #define CTH_FRAMEWORK_BUILD_VERSION "0.7.7-multi-home"
 #define CTH_FOLDER_POSITION_OFFSET 0x11DC
@@ -3044,33 +3044,20 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
                 topSdCount > CTH_LAYOUT_SLOTS)
                 res = (Result)-124;
 
-            u32 folderBase = foldersFirst ? 0 : topLauncherCount;
-            u32 launcherBase = foldersFirst ? folderCount : 0;
-            u32 launcherIndex = 0, sdIndex = 0;
+            u32 sdIndex = 0;
             for (u32 i = 0; R_SUCCEEDED(res) && i < mutationCount; i++)
             {
                 CthSdMutation *mutation = &g_sortMutations[i];
                 if (mutation->folder != -1)
                     continue;
                 if (mutation->mediaType == 0)
-                    mutation->newPosition = CompactTraversalPosition(
-                        launcherBase + launcherIndex++, launcherObjectCount,
-                        0, homeRows, rowMajor);
+                    mutation->newPosition = g_liveTitlePositions[i];
                 else
                     mutation->newPosition = CompactTraversalPosition(
                         sdIndex++, topSdCount, 0, homeRows, rowMajor);
             }
-            for (u32 sorted = 0; R_SUCCEEDED(res) && sorted < folderCount;
-                 sorted++)
-            {
-                u8 id = folderIds[sorted];
-                for (u32 f = 0; f < folderCount; f++)
-                    if (g_folderMutations[f].id == id)
-                        g_folderMutations[f].newPosition =
-                            CompactTraversalPosition(folderBase + sorted,
-                                                     launcherObjectCount, 0,
-                                                     homeRows, rowMajor);
-            }
+            for (u32 f = 0; f < folderCount; f++)
+                g_folderMutations[f].newPosition = g_liveFolderPositions[f];
 
             bool launcherOccupied[CTH_LAYOUT_SLOTS] = {false};
             bool sdOccupied[CTH_LAYOUT_SLOTS] = {false};
@@ -3107,7 +3094,8 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
             }
             g_sortDetailsLength += sprintf(g_sortDetails + g_sortDetailsLength,
                 "[PERSISTENCE_SPLIT]\nlauncher_top=%lu sd_top=%lu folders=%lu "
-                "launcher_objects=%lu mode=media-local-dense result=%08lx\n\n",
+                "launcher_objects=%lu mode=sd-local-launcher-combined "
+                "result=%08lx\n\n",
                 (unsigned long)topLauncherCount, (unsigned long)topSdCount,
                 (unsigned long)folderCount,
                 (unsigned long)launcherObjectCount, res);
@@ -3319,7 +3307,7 @@ static void WriteVisibleObjectInventory(Handle home, u32 records,
                               indirectPage, 0x2000, 0) : (Result)-1;
     int length = sprintf(g_objectInventory,
         "LumaHome visible object inventory\n"
-        "release=0.1.0-rc34\nformat=2\n"
+        "release=0.1.0-rc35\nformat=2\n"
         "records=%08lx record_map=%08lx indirect=%08lx indirect_map=%08lx\n"
         "columns=coordinate,inline_record,indirect_record,title_id,words2_7,word14,"
         "sd_slot,sd_position,sd_folder,launcher_slot,launcher_position,"
@@ -3424,7 +3412,7 @@ static void WriteVisibleObjectInventory(Handle home, u32 records,
         svcUnmapProcessMemoryEx(CUR_PROCESS_HANDLE, recordsLocal, recordsSize);
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/object-inventory-rc34.csv"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/object-inventory-rc35.csv"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -3439,7 +3427,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     char *report = g_layoutBackrefReport;
     int length = sprintf(report,
         "LumaHome live icon map report\n"
-        "release=0.1.0-rc34\nscan_version=2.6.2\n"
+        "release=0.1.0-rc35\nscan_version=2.7.0\n"
         "raw=%08lx\nprocessed=%08lx\n"
         "wrapper=003827d8\nrebuild_subobject=003827e4\n",
         g_lastRawAddress, g_lastProcessedAddress);
@@ -4117,7 +4105,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc34.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc35.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -4205,7 +4193,7 @@ Result CthulhuHomeMenu_CaptureObjectInventory(void)
     char captureReport[512];
     int captureLength = sprintf(captureReport,
         "LumaHome read-only capture report\n"
-        "release=0.1.0-rc34\n"
+        "release=0.1.0-rc35\n"
         "sd_discovery=%08lx\nraw=%08lx\nprocessed=%08lx\n"
         "launcher_file=%08lx\nlauncher_resident=%08lx\n"
         "launcher_address=%08lx\nlauncher_matches=%lu\n"
@@ -4216,7 +4204,7 @@ Result CthulhuHomeMenu_CaptureObjectInventory(void)
     IFile captureFile = {0};
     if (R_SUCCEEDED(IFile_Open(&captureFile, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/capture-report-rc34.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/capture-report-rc35.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -4277,6 +4265,17 @@ Result CthulhuHomeMenu_RunBackgroundSort(u16 selectedAlgorithm,
                          "atomic-home-unlocked" : "atomic-home-unlock-failed",
                          unlockResult);
         if (R_FAILED(unlockResult)) res = unlockResult;
+        /* Persist the same narrowly targeted Launcher identities immediately
+           after HOME resumes.  Waiting only for shutdown let an application
+           transition reload the old Launcher.dat folder position and undo a
+           correct live move.  Keep the plan armed so shutdown re-verifies it. */
+        Result applyLauncherCommit = (Result)-1;
+        if (R_SUCCEEDED(res) && g_folderPlan.magic == CTH_FOLDER_PLAN_MAGIC &&
+            (g_folderPlan.count != 0 || g_folderPlan.titleCount != 0))
+            applyLauncherCommit = WriteLauncherFolderPositions();
+        WriteSortJournal(R_SUCCEEDED(applyLauncherCommit) ?
+            "apply-launcher-committed" : "apply-launcher-deferred",
+            applyLauncherCommit);
         if (R_SUCCEEDED(res) && commandChannel != NULL && g_liveMapChanged)
         {
             u32 request = commandChannel[0xCC / 4] + 1;
@@ -4667,6 +4666,8 @@ void CthulhuHomeMenu_WritePersistenceAudit(void)
     bool expectedValid = R_SUCCEEDED(expectedResult) &&
                          ValidateLayout(expected, false, &expectedUsed);
     u32 byteMismatches = 0, positionMismatches = 0;
+    u32 identityPositionMismatches = 0, slotPermutations = 0;
+    u32 identityMissing = 0;
     if (currentValid && expectedValid)
     {
         for (u32 i = 0; i < CTH_SD_LAYOUT_SIZE; i++)
@@ -4675,17 +4676,44 @@ void CthulhuHomeMenu_WritePersistenceAudit(void)
             if (ReadS16(g_sortRaw, 0xCB0 + slot * 2) !=
                 ReadS16(expected, 0xCB0 + slot * 2))
                 positionMismatches++;
+        for (u32 expectedSlot = 0; expectedSlot < CTH_LAYOUT_SLOTS;
+             expectedSlot++)
+        {
+            u64 titleId = ReadU64(expected, 8 + expectedSlot * sizeof(u64));
+            if (titleId == 0 || titleId == UINT64_MAX)
+                continue;
+            u16 currentSlot = 0;
+            s16 currentPosition = -1;
+            s8 currentFolder = -2;
+            int matches = FindRawTitleSlot(g_sortRaw, false, titleId,
+                                           &currentSlot, &currentPosition,
+                                           &currentFolder);
+            if (matches != 1)
+                identityMissing++;
+            else
+            {
+                if (currentSlot != expectedSlot) slotPermutations++;
+                if (currentPosition !=
+                    ReadS16(expected, 0xCB0 + expectedSlot * 2))
+                    identityPositionMismatches++;
+            }
+        }
     }
     length += sprintf(report + length,
         "\n[EXTDATA]\ncurrent_result=%08lx current_valid=%u current_titles=%u "
         "current_crc=%08lx\nexpected_result=%08lx expected_valid=%u "
         "expected_titles=%u expected_crc=%08lx\n"
-        "byte_mismatches=%lu position_mismatches=%lu\n",
+        "byte_mismatches=%lu position_mismatches=%lu\n"
+        "slot_permutations=%lu identity_position_mismatches=%lu "
+        "identity_missing=%lu\n",
         currentResult, currentValid, currentUsed,
         currentValid ? CthCrc32(g_sortRaw, sizeof(g_sortRaw)) : 0,
         expectedResult, expectedValid, expectedUsed,
         expectedValid ? CthCrc32(expected, sizeof(expected)) : 0,
-        (unsigned long)byteMismatches, (unsigned long)positionMismatches);
+        (unsigned long)byteMismatches, (unsigned long)positionMismatches,
+        (unsigned long)slotPermutations,
+        (unsigned long)identityPositionMismatches,
+        (unsigned long)identityMissing);
     if (currentValid && expectedValid)
     {
         length += sprintf(report + length,
