@@ -19,7 +19,7 @@
 #define CTH_LAUNCHER_TO_SD_DELTA (CTH_SD_RAW_ADDRESS - CTH_NAND_RAW_ADDRESS)
 #define CTH_REQUEST_MAGIC 0x53544843
 #define CTH_REQUEST_VERSION 3
-#define CTH_SORT_BUILD_VERSION "0.1.0-rc33"
+#define CTH_SORT_BUILD_VERSION "0.1.0-rc34"
 #define CTH_INLINE_FOLDER_RECORD_RECOVERY_HINT 190
 #define CTH_FRAMEWORK_BUILD_VERSION "0.7.7-multi-home"
 #define CTH_FOLDER_POSITION_OFFSET 0x11DC
@@ -3319,7 +3319,7 @@ static void WriteVisibleObjectInventory(Handle home, u32 records,
                               indirectPage, 0x2000, 0) : (Result)-1;
     int length = sprintf(g_objectInventory,
         "LumaHome visible object inventory\n"
-        "release=0.1.0-rc33\nformat=2\n"
+        "release=0.1.0-rc34\nformat=2\n"
         "records=%08lx record_map=%08lx indirect=%08lx indirect_map=%08lx\n"
         "columns=coordinate,inline_record,indirect_record,title_id,words2_7,word14,"
         "sd_slot,sd_position,sd_folder,launcher_slot,launcher_position,"
@@ -3424,7 +3424,7 @@ static void WriteVisibleObjectInventory(Handle home, u32 records,
         svcUnmapProcessMemoryEx(CUR_PROCESS_HANDLE, recordsLocal, recordsSize);
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/object-inventory-rc33.csv"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/object-inventory-rc34.csv"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -3439,7 +3439,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     char *report = g_layoutBackrefReport;
     int length = sprintf(report,
         "LumaHome live icon map report\n"
-        "release=0.1.0-rc33\nscan_version=2.6.1\n"
+        "release=0.1.0-rc34\nscan_version=2.6.2\n"
         "raw=%08lx\nprocessed=%08lx\n"
         "wrapper=003827d8\nrebuild_subobject=003827e4\n",
         g_lastRawAddress, g_lastProcessedAddress);
@@ -4117,7 +4117,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc33.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc34.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -4205,7 +4205,7 @@ Result CthulhuHomeMenu_CaptureObjectInventory(void)
     char captureReport[512];
     int captureLength = sprintf(captureReport,
         "LumaHome read-only capture report\n"
-        "release=0.1.0-rc33\n"
+        "release=0.1.0-rc34\n"
         "sd_discovery=%08lx\nraw=%08lx\nprocessed=%08lx\n"
         "launcher_file=%08lx\nlauncher_resident=%08lx\n"
         "launcher_address=%08lx\nlauncher_matches=%lu\n"
@@ -4216,7 +4216,7 @@ Result CthulhuHomeMenu_CaptureObjectInventory(void)
     IFile captureFile = {0};
     if (R_SUCCEEDED(IFile_Open(&captureFile, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/capture-report-rc33.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/capture-report-rc34.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -4652,7 +4652,7 @@ void CthulhuHomeMenu_RestoreSdSort(void)
 void CthulhuHomeMenu_WritePersistenceAudit(void)
 {
     static u8 expected[CTH_SD_LAYOUT_SIZE];
-    char report[4096];
+    static char report[0x8000];
     int length = sprintf(report,
         "Cthulhu HOME persistence audit v1\n"
         "sorter_version=" CTH_SORT_BUILD_VERSION "\n");
@@ -4686,6 +4686,34 @@ void CthulhuHomeMenu_WritePersistenceAudit(void)
         expectedResult, expectedValid, expectedUsed,
         expectedValid ? CthCrc32(expected, sizeof(expected)) : 0,
         (unsigned long)byteMismatches, (unsigned long)positionMismatches);
+    if (currentValid && expectedValid)
+    {
+        length += sprintf(report + length,
+            "\n[POSITION_NORMALIZATION]\n"
+            "columns=title_id,expected_slot,current_slot,expected_position,"
+            "current_position,expected_folder,current_folder,matches\n");
+        for (u32 expectedSlot = 0; expectedSlot < CTH_LAYOUT_SLOTS;
+             expectedSlot++)
+        {
+            u64 titleId = ReadU64(expected, 8 + expectedSlot * sizeof(u64));
+            if (titleId == 0 || titleId == UINT64_MAX)
+                continue;
+            u16 currentSlot = 0;
+            s16 currentPosition = -1;
+            s8 currentFolder = -2;
+            int matches = FindRawTitleSlot(g_sortRaw, false, titleId,
+                                           &currentSlot, &currentPosition,
+                                           &currentFolder);
+            length += sprintf(report + length,
+                "%016llx,%lu,%d,%d,%d,%d,%d,%d\n",
+                titleId, (unsigned long)expectedSlot,
+                matches == 1 ? (int)currentSlot : -1,
+                ReadS16(expected, 0xCB0 + expectedSlot * 2),
+                matches == 1 ? currentPosition : -1,
+                (int)(s8)expected[0xF80 + expectedSlot],
+                matches == 1 ? (int)currentFolder : -2, matches);
+        }
+    }
     if (currentValid)
         WriteSdmcLayout("/3ds/Cthulhu/boot-current-SaveData.dat", g_sortRaw);
 
