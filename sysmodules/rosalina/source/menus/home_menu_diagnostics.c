@@ -19,7 +19,7 @@
 #define CTH_LAUNCHER_TO_SD_DELTA (CTH_SD_RAW_ADDRESS - CTH_NAND_RAW_ADDRESS)
 #define CTH_REQUEST_MAGIC 0x53544843
 #define CTH_REQUEST_VERSION 3
-#define CTH_SORT_BUILD_VERSION "0.1.0-rc37"
+#define CTH_SORT_BUILD_VERSION "0.1.0-rc38"
 #define CTH_INLINE_FOLDER_RECORD_RECOVERY_HINT 190
 #define CTH_FRAMEWORK_BUILD_VERSION "0.7.7-multi-home"
 #define CTH_FOLDER_POSITION_OFFSET 0x11DC
@@ -1110,6 +1110,7 @@ static u8 g_sortOriginal[CTH_SD_LAYOUT_SIZE];
 static u8 g_sortCommitted[CTH_SD_LAYOUT_SIZE];
 static u8 g_launcherRaw[CTH_LAUNCHER_SIZE];
 static u8 g_launcherOriginal[CTH_LAUNCHER_SIZE];
+static u8 g_launcherFolderFallback[CTH_LAUNCHER_SIZE];
 static u32 g_launcherCandidateAddresses[16];
 static u32 g_launcherCandidateCount;
 static u64 g_sortGrid[CTH_PROCESSED_ENTRIES];
@@ -1130,6 +1131,7 @@ static s16 g_liveFolderPositions[CTH_FOLDER_COUNT];
 static Result DiscoverLauncherRuntime(Handle process, u32 preferredAddress,
                                       u32 *addressOut,
                                       MemInfo *regionOut, u32 *matchesOut);
+static Result ReadSdmcLauncher(const char *path, u8 *destination);
 
 /* Validate the complete remote span against the mapping that contains its
    first byte. Architectural VA windows are not allocation boundaries. */
@@ -2762,6 +2764,55 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
             "source=%s folders=%u\n\n", launcherFileResult,
             launcherFileValid ? 1UL : 0UL,
             launcherFileValid ? "file" : "resident", launcherUsed);
+
+        /* The archive can be locked while HOME's resident title table omits
+           folder metadata. Recover metadata only for folder IDs that current
+           SD titles actively reference; never import title records. */
+        u32 residentFolders = CountCredibleLiveFolders(g_launcherRaw + 8);
+        u32 recoveredFolders = 0;
+        Result folderFallbackResult = (Result)-1;
+        if (!launcherFileValid && residentFolders == 0)
+        {
+            folderFallbackResult = ReadSdmcLauncher(
+                "/3ds/Cthulhu/pre-sort-Launcher.dat",
+                g_launcherFolderFallback);
+            u16 fallbackUsed = 0;
+            if (R_SUCCEEDED(folderFallbackResult) &&
+                ValidateLayout(g_launcherFolderFallback, true, &fallbackUsed))
+                for (u32 folder = 0; folder < CTH_FOLDER_COUNT; folder++)
+                {
+                    bool referenced = false;
+                    for (u32 slot = 0; slot < CTH_LAYOUT_SLOTS; slot++)
+                        if ((s8)g_sortRaw[0xF80 + slot] == (s8)folder)
+                        {
+                            referenced = true;
+                            break;
+                        }
+                    u32 number = 0;
+                    memcpy(&number, g_launcherFolderFallback +
+                        CTH_FOLDER_NUMBER_OFFSET + folder * 4, 4);
+                    if (!referenced || number == 0)
+                        continue;
+                    memcpy(g_launcherRaw + CTH_FOLDER_POSITION_OFFSET +
+                        folder * 2, g_launcherFolderFallback +
+                        CTH_FOLDER_POSITION_OFFSET + folder * 2, 2);
+                    memcpy(g_launcherRaw + CTH_FOLDER_NUMBER_OFFSET +
+                        folder * 4, g_launcherFolderFallback +
+                        CTH_FOLDER_NUMBER_OFFSET + folder * 4, 4);
+                    memcpy(g_launcherRaw + CTH_FOLDER_NAME_OFFSET +
+                        folder * 0x22, g_launcherFolderFallback +
+                        CTH_FOLDER_NAME_OFFSET + folder * 0x22, 0x22);
+                    g_launcherRaw[CTH_FOLDER_ROWS_OFFSET + folder] =
+                        g_launcherFolderFallback[CTH_FOLDER_ROWS_OFFSET + folder];
+                    recoveredFolders++;
+                }
+            else if (R_SUCCEEDED(folderFallbackResult))
+                folderFallbackResult = (Result)-133;
+        }
+        g_sortDetailsLength += sprintf(g_sortDetails + g_sortDetailsLength,
+            "[FOLDER_METADATA_FALLBACK]\nresident=%lu result=%08lx "
+            "recovered=%lu\n\n", (unsigned long)residentFolders,
+            folderFallbackResult, (unsigned long)recoveredFolders);
     }
 
     u32 homeRows = 0;
@@ -2836,9 +2887,14 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
             }
             SortPositionsForTraversal(positions, groupCount, 0, rows,
                                       rowMajor);
-            for (u32 i = 1; i < groupCount; i++)
-                if (positions[i] == positions[i - 1])
-                    res = (Result)-25;
+            /* With Collapse enabled the target comes from the sorted request
+               index, not from the old numeric coordinate. SD and Launcher
+               use different persistence namespaces and may legitimately
+               contain the same number. */
+            if (!collapseGaps)
+                for (u32 i = 1; i < groupCount; i++)
+                    if (positions[i] == positions[i - 1])
+                        res = (Result)-25;
             for (u32 i = 0; R_SUCCEEDED(res) && i < groupCount; i++)
             {
                 CthSdMutation *mutation = &g_sortMutations[mutationIndexes[i]];
@@ -3338,7 +3394,7 @@ static void WriteVisibleObjectInventory(Handle home, u32 records,
             indirectLocal, home, indirectPage, 0x2000, 0);
     int length = sprintf(g_objectInventory,
         "LumaHome visible object inventory\n"
-        "release=0.1.0-rc37\nformat=2\n"
+        "release=0.1.0-rc38\nformat=2\n"
         "records=%08lx record_map=%08lx indirect=%08lx indirect_map=%08lx\n"
         "columns=coordinate,inline_record,indirect_record,title_id,words2_7,word14,"
         "sd_slot,sd_position,sd_folder,launcher_slot,launcher_position,"
@@ -3443,7 +3499,7 @@ static void WriteVisibleObjectInventory(Handle home, u32 records,
         svcUnmapProcessMemoryEx(CUR_PROCESS_HANDLE, recordsLocal, recordsSize);
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/object-inventory-rc37.csv"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/object-inventory-rc38.csv"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -3458,7 +3514,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     char *report = g_layoutBackrefReport;
     int length = sprintf(report,
         "LumaHome live icon map report\n"
-        "release=0.1.0-rc37\nscan_version=2.8.0\n"
+        "release=0.1.0-rc38\nscan_version=2.8.1\n"
         "raw=%08lx\nprocessed=%08lx\n"
         "wrapper=003827d8\nrebuild_subobject=003827e4\n",
         g_lastRawAddress, g_lastProcessedAddress);
@@ -4192,7 +4248,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc37.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc38.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -4280,7 +4336,7 @@ Result CthulhuHomeMenu_CaptureObjectInventory(void)
     char captureReport[512];
     int captureLength = sprintf(captureReport,
         "LumaHome read-only capture report\n"
-        "release=0.1.0-rc37\n"
+        "release=0.1.0-rc38\n"
         "sd_discovery=%08lx\nraw=%08lx\nprocessed=%08lx\n"
         "launcher_file=%08lx\nlauncher_resident=%08lx\n"
         "launcher_address=%08lx\nlauncher_matches=%lu\n"
@@ -4291,7 +4347,7 @@ Result CthulhuHomeMenu_CaptureObjectInventory(void)
     IFile captureFile = {0};
     if (R_SUCCEEDED(IFile_Open(&captureFile, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/capture-report-rc37.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/capture-report-rc38.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
