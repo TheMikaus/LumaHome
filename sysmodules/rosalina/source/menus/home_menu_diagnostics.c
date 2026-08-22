@@ -19,7 +19,7 @@
 #define CTH_LAUNCHER_TO_SD_DELTA (CTH_SD_RAW_ADDRESS - CTH_NAND_RAW_ADDRESS)
 #define CTH_REQUEST_MAGIC 0x53544843
 #define CTH_REQUEST_VERSION 3
-#define CTH_SORT_BUILD_VERSION "0.1.0-rc36"
+#define CTH_SORT_BUILD_VERSION "0.1.0-rc37"
 #define CTH_INLINE_FOLDER_RECORD_RECOVERY_HINT 190
 #define CTH_FRAMEWORK_BUILD_VERSION "0.7.7-multi-home"
 #define CTH_FOLDER_POSITION_OFFSET 0x11DC
@@ -1130,6 +1130,30 @@ static s16 g_liveFolderPositions[CTH_FOLDER_COUNT];
 static Result DiscoverLauncherRuntime(Handle process, u32 preferredAddress,
                                       u32 *addressOut,
                                       MemInfo *regionOut, u32 *matchesOut);
+
+/* Validate the complete remote span against the mapping that contains its
+   first byte. Architectural VA windows are not allocation boundaries. */
+static Result ValidateRemoteSpan(Handle process, u32 address, u32 size,
+                                 u32 requiredPerm, MemInfo *regionOut)
+{
+    if (size == 0 || address > UINT32_MAX - (size - 1))
+        return (Result)-130;
+    MemInfo mem = {0};
+    PageInfo page = {0};
+    Result res = svcQueryProcessMemory(&mem, &page, process, address);
+    if (R_FAILED(res))
+        return res;
+    u64 spanEnd = (u64)address + size;
+    u64 regionEnd = (u64)mem.base_addr + mem.size;
+    if (mem.size == 0 || mem.state == MEMSTATE_FREE ||
+        address < mem.base_addr || spanEnd > regionEnd)
+        return (Result)-131;
+    if ((mem.perm & requiredPerm) != requiredPerm)
+        return (Result)-132;
+    if (regionOut != NULL)
+        *regionOut = mem;
+    return 0;
+}
 
 static u32 CountCredibleLiveFolders(const u8 *candidate)
 {
@@ -3299,15 +3323,22 @@ static void WriteVisibleObjectInventory(Handle home, u32 records,
     u32 recordsOffset = records & 0xFFF;
     u32 indirectPage = indirectMap & ~0xFFF;
     u32 indirectOffset = indirectMap & 0xFFF;
-    Result recordResult = records >= 0x08000000 && records < 0x40000000 ?
-        svcMapProcessMemoryEx(CUR_PROCESS_HANDLE, recordsLocal, home,
-                              records & ~0xFFF, recordsSize, 0) : (Result)-1;
-    Result indirectResult = indirectMap >= 0x08000000 && indirectMap < 0x40000000 ?
-        svcMapProcessMemoryEx(CUR_PROCESS_HANDLE, indirectLocal, home,
-                              indirectPage, 0x2000, 0) : (Result)-1;
+    Result recordResult = ValidateRemoteSpan(home, records & ~0xFFF,
+        recordsSize, MEMPERM_READ, NULL);
+    if (R_SUCCEEDED(recordResult))
+        recordResult = svcMapProcessMemoryEx(CUR_PROCESS_HANDLE, recordsLocal,
+            home, records & ~0xFFF, recordsSize, 0);
+    Result indirectResult = ValidateRemoteSpan(home, indirectMap,
+        CTH_LAYOUT_SLOTS * sizeof(s16), MEMPERM_READ, NULL);
+    if (R_SUCCEEDED(indirectResult))
+        indirectResult = ValidateRemoteSpan(home, indirectPage, 0x2000,
+            MEMPERM_READ, NULL);
+    if (R_SUCCEEDED(indirectResult))
+        indirectResult = svcMapProcessMemoryEx(CUR_PROCESS_HANDLE,
+            indirectLocal, home, indirectPage, 0x2000, 0);
     int length = sprintf(g_objectInventory,
         "LumaHome visible object inventory\n"
-        "release=0.1.0-rc36\nformat=2\n"
+        "release=0.1.0-rc37\nformat=2\n"
         "records=%08lx record_map=%08lx indirect=%08lx indirect_map=%08lx\n"
         "columns=coordinate,inline_record,indirect_record,title_id,words2_7,word14,"
         "sd_slot,sd_position,sd_folder,launcher_slot,launcher_position,"
@@ -3412,7 +3443,7 @@ static void WriteVisibleObjectInventory(Handle home, u32 records,
         svcUnmapProcessMemoryEx(CUR_PROCESS_HANDLE, recordsLocal, recordsSize);
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/object-inventory-rc36.csv"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/object-inventory-rc37.csv"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -3427,7 +3458,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     char *report = g_layoutBackrefReport;
     int length = sprintf(report,
         "LumaHome live icon map report\n"
-        "release=0.1.0-rc36\nscan_version=2.7.1\n"
+        "release=0.1.0-rc37\nscan_version=2.8.0\n"
         "raw=%08lx\nprocessed=%08lx\n"
         "wrapper=003827d8\nrebuild_subobject=003827e4\n",
         g_lastRawAddress, g_lastProcessedAddress);
@@ -3603,10 +3634,18 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
                sizeof(g_liveDesiredTopLevelAt));
         g_liveMapChanged = false;
         g_liveMapPartial = false;
-        const u32 pointerAddress = iconModel + 0x398F8;
+        const u32 pointerAddress = iconModel <= UINT32_MAX - 0x398F8 ?
+                                   iconModel + 0x398F8 : 0;
         const u32 pointerPage = pointerAddress & ~0xFFF;
-        Result map = svcMapProcessMemoryEx(CUR_PROCESS_HANDLE, localWindow,
-            home, pointerPage, 0x1000, 0);
+        MemInfo pointerMem = {0};
+        Result map = ValidateRemoteSpan(home, pointerAddress, sizeof(u32),
+                                        MEMPERM_READ, &pointerMem);
+        if (R_SUCCEEDED(map))
+            map = ValidateRemoteSpan(home, pointerPage, 0x1000,
+                                     MEMPERM_READ, NULL);
+        if (R_SUCCEEDED(map))
+            map = svcMapProcessMemoryEx(CUR_PROCESS_HANDLE, localWindow,
+                home, pointerPage, 0x1000, 0);
         u32 records = 0;
         if (R_SUCCEEDED(map))
         {
@@ -3615,17 +3654,25 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
             svcUnmapProcessMemoryEx(CUR_PROCESS_HANDLE, localWindow, 0x1000);
         }
         length += sprintf(report + length,
-            "model_records_pointer=%08lx\nmodel_pointer_result=%08lx\n",
-            records, map);
-        if (R_SUCCEEDED(map) && records >= 0x08000000 && records < 0x40000000)
+            "model_records_pointer=%08lx\nmodel_pointer_result=%08lx\n"
+            "model_pointer_region=%08lx+%08lx perm=%08lx state=%08lx\n",
+            records, map, pointerMem.base_addr, pointerMem.size,
+            pointerMem.perm, pointerMem.state);
+        if (R_SUCCEEDED(map))
         {
             u32 recordPage = records & ~0xFFF;
             u32 recordOffset = records & 0xFFF;
             u32 recordMapSize = 0x3000;
             if (recordOffset + 12 * 0x230 > recordMapSize)
                 recordMapSize = 0x4000;
-            map = svcMapProcessMemoryEx(CUR_PROCESS_HANDLE, localWindow,
-                home, recordPage, recordMapSize, 0);
+            map = ValidateRemoteSpan(home, records, 12 * 0x230,
+                                     MEMPERM_READ, NULL);
+            if (R_SUCCEEDED(map))
+                map = ValidateRemoteSpan(home, recordPage, recordMapSize,
+                                         MEMPERM_READ, NULL);
+            if (R_SUCCEEDED(map))
+                map = svcMapProcessMemoryEx(CUR_PROCESS_HANDLE, localWindow,
+                    home, recordPage, recordMapSize, 0);
             if (R_SUCCEEDED(map))
             {
                 const u8 *recordBase = (const u8 *)(localWindow + recordOffset);
@@ -3644,8 +3691,15 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
             length += sprintf(report + length,
                 "model_records_result=%08lx\n", map);
             const u32 fullMapSize = 0x3B000;
-            map = svcMapProcessMemoryEx(CUR_PROCESS_HANDLE, localWindow,
-                home, recordPage, fullMapSize, 0);
+            MemInfo recordMem = {0};
+            map = ValidateRemoteSpan(home, records, 420 * 0x230,
+                                     MEMPERM_READ, &recordMem);
+            if (R_SUCCEEDED(map))
+                map = ValidateRemoteSpan(home, recordPage, fullMapSize,
+                                         MEMPERM_READ, NULL);
+            if (R_SUCCEEDED(map))
+                map = svcMapProcessMemoryEx(CUR_PROCESS_HANDLE, localWindow,
+                    home, recordPage, fullMapSize, 0);
             u32 matched = 0;
             if (R_SUCCEEDED(map))
             {
@@ -3701,8 +3755,11 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
                 "matched_sd_records=%lu\ndesired_records=%lu\n"
                 "top_level_records=%lu\nfolder_records=%lu\n"
                 "desired_missing=%lu\n"
-                "full_model_result=%08lx\n", matched, desiredCount,
-                topLevelRecordCount, folderRecordCount, desiredMissing, map);
+                "full_model_result=%08lx\n"
+                "full_model_region=%08lx+%08lx perm=%08lx state=%08lx\n",
+                matched, desiredCount, topLevelRecordCount, folderRecordCount,
+                desiredMissing, map, recordMem.base_addr, recordMem.size,
+                recordMem.perm, recordMem.state);
             matchedRecords = matched;
         }
 
@@ -3710,10 +3767,19 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
            the signed-16-bit map beginning at model+0x4450E.  Capture that
            map and the adjacent header/pointer at +0x44508 before attempting
            any model mutation. */
-        const u32 indexHeaderAddress = iconModel + 0x44500;
+        const u32 indexHeaderAddress = iconModel <= UINT32_MAX - 0x44500 ?
+                                       iconModel + 0x44500 : 0;
         const u32 indexHeaderPage = indexHeaderAddress & ~0xFFF;
-        map = svcMapProcessMemoryEx(CUR_PROCESS_HANDLE, localWindow,
-            home, indexHeaderPage, 0x1000, 0);
+        MemInfo headerMem = {0};
+        map = ValidateRemoteSpan(home, indexHeaderAddress,
+            0x0E + 420 * sizeof(s16), MEMPERM_READ | MEMPERM_WRITE,
+            &headerMem);
+        if (R_SUCCEEDED(map))
+            map = ValidateRemoteSpan(home, indexHeaderPage, 0x1000,
+                MEMPERM_READ | MEMPERM_WRITE, NULL);
+        if (R_SUCCEEDED(map))
+            map = svcMapProcessMemoryEx(CUR_PROCESS_HANDLE, localWindow,
+                home, indexHeaderPage, 0x1000, 0);
         u32 indirectMap = 0;
         if (R_SUCCEEDED(map))
         {
@@ -3792,9 +3858,12 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
             const u32 unmatchedLocal = 0x00D00000;
             const u32 unmatchedMapSize = 0x3B000;
             u32 unmatchedRecordOffset = records & 0xFFF;
-            Result unmatchedMapResult = records >= 0x08000000 && records < 0x40000000 ?
-                svcMapProcessMemoryEx(CUR_PROCESS_HANDLE, unmatchedLocal, home,
-                    records & ~0xFFF, unmatchedMapSize, 0) : (Result)-1;
+            Result unmatchedMapResult = ValidateRemoteSpan(home,
+                records & ~0xFFF, unmatchedMapSize, MEMPERM_READ, NULL);
+            if (R_SUCCEEDED(unmatchedMapResult))
+                unmatchedMapResult = svcMapProcessMemoryEx(CUR_PROCESS_HANDLE,
+                    unmatchedLocal, home, records & ~0xFFF,
+                    unmatchedMapSize, 0);
             u32 nonTitleInline = 0;
             for (u32 i = 0; i < 420 && nonTitleInline < 48; i++)
             {
@@ -3936,12 +4005,21 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
             svcUnmapProcessMemoryEx(CUR_PROCESS_HANDLE, localWindow, 0x1000);
         }
         length += sprintf(report + length,
-            "index_header_result=%08lx\n", map);
-        if (indirectMap >= 0x08000000 && indirectMap < 0x40000000)
+            "index_header_result=%08lx\n"
+            "index_header_region=%08lx+%08lx perm=%08lx state=%08lx\n",
+            map, headerMem.base_addr, headerMem.size, headerMem.perm,
+            headerMem.state);
+        MemInfo indirectMem = {0};
+        map = ValidateRemoteSpan(home, indirectMap,
+            420 * sizeof(s16), MEMPERM_READ | MEMPERM_WRITE, &indirectMem);
+        if (R_SUCCEEDED(map))
         {
             const u32 indirectPage = indirectMap & ~0xFFF;
-            map = svcMapProcessMemoryEx(CUR_PROCESS_HANDLE, localWindow,
-                home, indirectPage, 0x1000, 0);
+            map = ValidateRemoteSpan(home, indirectPage, 0x1000,
+                                     MEMPERM_READ | MEMPERM_WRITE, NULL);
+            if (R_SUCCEEDED(map))
+                map = svcMapProcessMemoryEx(CUR_PROCESS_HANDLE, localWindow,
+                    home, indirectPage, 0x1000, 0);
             if (R_SUCCEEDED(map))
             {
                 volatile s16 *indices = (volatile s16 *)(localWindow +
@@ -4099,13 +4177,22 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
                                         localWindow, 0x1000);
             }
             length += sprintf(report + length,
-                "index_indirect_result=%08lx\n", map);
+                "index_indirect_result=%08lx\n"
+                "index_indirect_region=%08lx+%08lx perm=%08lx state=%08lx\n",
+                map, indirectMem.base_addr, indirectMem.size,
+                indirectMem.perm, indirectMem.state);
         }
+        else
+            length += sprintf(report + length,
+                "index_indirect_result=%08lx\n"
+                "index_indirect_region=%08lx+%08lx perm=%08lx state=%08lx\n",
+                map, indirectMem.base_addr, indirectMem.size,
+                indirectMem.perm, indirectMem.state);
     }
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc36.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc37.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -4193,7 +4280,7 @@ Result CthulhuHomeMenu_CaptureObjectInventory(void)
     char captureReport[512];
     int captureLength = sprintf(captureReport,
         "LumaHome read-only capture report\n"
-        "release=0.1.0-rc36\n"
+        "release=0.1.0-rc37\n"
         "sd_discovery=%08lx\nraw=%08lx\nprocessed=%08lx\n"
         "launcher_file=%08lx\nlauncher_resident=%08lx\n"
         "launcher_address=%08lx\nlauncher_matches=%lu\n"
@@ -4204,7 +4291,7 @@ Result CthulhuHomeMenu_CaptureObjectInventory(void)
     IFile captureFile = {0};
     if (R_SUCCEEDED(IFile_Open(&captureFile, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/capture-report-rc36.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/capture-report-rc37.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
