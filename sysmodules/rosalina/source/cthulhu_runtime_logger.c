@@ -15,7 +15,7 @@
 #define CTH_PANEL_LOCAL 0x00200000
 #define CTH_PANEL_SIZE 0x0001C200
 #define CTH_MARKER_V167 0x43545337
-#define CTH_VISIBLE_RELEASE "LUMAHOME 0.1 RC46"
+#define CTH_VISIBLE_RELEASE "LUMAHOME 0.1 RC47"
 #define CTH_CHORD (KEY_L | KEY_Y)
 #define CTH_CODE_LOCAL 0x00400000
 #define CTH_FRAME_SITE 0x00101AAC
@@ -131,7 +131,7 @@ static void writeAppliedOptions(bool reverse, bool foldersFirst,
     char report[384];
     int length = sprintf(report,
         "LumaHome last applied sort options\n"
-        "release=0.1.0-rc46\n"
+        "release=0.1.0-rc47\n"
         "direction=%s\nfolder_placement=%s\ncollapse_gaps=%s\ntraversal=%s\n",
         reverse ? "Z-A" : "A-Z", foldersFirst ? "before" : "after",
         collapseGaps ? "on" : "off", rowMajor ? "row-major" : "column-major");
@@ -278,7 +278,7 @@ static void writeLifecycle(u32 pid, const char *state, Result result,
     char report[768];
     int n = sprintf(report,
         "LumaHome HOME hook lifecycle log\n"
-        "runtime_version=1.12.2\nmode=active-home-controller-v1122\n"
+        "runtime_version=1.12.3\nmode=active-home-controller-v1123\n"
         "pid=%lu\nstate=%s\nresult=%08lx\nmarker=%08lx\n"
         "heartbeat=%lu\npanel=%08lx\nframe_hook=%08lx\n"
         "expected_frame_hook=%08lx\nstub=%08lx\nrecoveries=%lu\n",
@@ -380,7 +380,7 @@ static void writeWatchdog(u32 pid, Result result, u32 marker, u32 heartbeat,
         stallSamples >= 3 ? "heartbeat-stalled" : "healthy";
     int n = sprintf(report,
         "LumaHome independent HOME watchdog\n"
-        "watchdog_version=1.12.2\nbase_overlay=V167\n"
+        "watchdog_version=1.12.3\nbase_overlay=V167\n"
         "state=%s\nresult=%08lx\n"
         "pid=%lu\npid_changes=%lu\nsamples=%lu\n"
         "marker=%08lx\nheartbeat=%lu\nprevious_heartbeat=%lu\n"
@@ -598,8 +598,8 @@ static void writeSnapshot(u32 pid, volatile u32 *v, u32 held, u32 pressed,
     char report[1800];
     int n = sprintf(report,
         "LumaHome HOME OSD automatic runtime log\n"
-        "release=0.1.0-rc46\nruntime_version=1.12.2\n"
-        "mode=active-home-controller-v1105\n"
+        "release=0.1.0-rc47\nruntime_version=1.12.3\n"
+        "mode=active-home-controller-v1123\n"
         "pid=%lu\nmarker=%08lx\nmarker_ok=%u\n"
         "heartbeat=%lu\noverlay=%lu\nheld=%08lx\npressed=%08lx\n"
         "selection=%lu\ndirection=%s\nfolder_placement=%s\ncollapse_gaps=%s\ntraversal=%s\n"
@@ -629,8 +629,11 @@ static void writeSnapshot(u32 pid, volatile u32 *v, u32 held, u32 pressed,
         v[0xF0 / 4], v[0xF4 / 4]);
     n += sprintf(report + n,
         "icon_refresh_owner=%08lx\nicon_refresh_calls=%lu\n"
-        "icon_refresh_requested_owner=%08lx\nicon_refresh_completed=%lu\n",
-        v[0xF8 / 4], v[0xFC / 4], v[0x100 / 4], v[0x104 / 4]);
+        "icon_refresh_requested_owner=%08lx\nicon_refresh_completed=%lu\n"
+        "active_rows_stored=%lu\nactive_rows=%lu\nactive_rows_generation=%lu\n",
+        v[0xF8 / 4], v[0xFC / 4], v[0x100 / 4], v[0x104 / 4],
+        v[0x10C / 4], v[0x10C / 4] <= 5 ? v[0x10C / 4] + 1 : 0,
+        v[0x110 / 4]);
     IFile file;
     Result res = IFile_Open(&file, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, ""),
         fsMakePath(PATH_ASCII, "/3ds/LumaHome/runtime.txt"),

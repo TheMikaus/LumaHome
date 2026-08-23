@@ -19,7 +19,7 @@
 #define CTH_LAUNCHER_TO_SD_DELTA (CTH_SD_RAW_ADDRESS - CTH_NAND_RAW_ADDRESS)
 #define CTH_REQUEST_MAGIC 0x53544843
 #define CTH_REQUEST_VERSION 3
-#define CTH_SORT_BUILD_VERSION "0.1.0-rc46"
+#define CTH_SORT_BUILD_VERSION "0.1.0-rc47"
 #define CTH_INLINE_FOLDER_RECORD_RECOVERY_HINT 190
 #define CTH_FRAMEWORK_BUILD_VERSION "0.7.7-multi-home"
 #define CTH_FOLDER_POSITION_OFFSET 0x11DC
@@ -136,6 +136,8 @@ static void ShowProgress(const char *stage, u32 current, u32 total)
 
 bool g_cthulhuBackgroundSort = false;
 static char g_layoutBackrefReport[12288];
+static u32 g_activeRowsStored;
+static u32 g_activeRowsGeneration;
 static char g_objectInventory[0x20000];
 
 static u64 ReadU64(const u8 *data, u32 offset)
@@ -1963,9 +1965,8 @@ static void SortPositions(s16 *positions, u32 count)
 
 static u32 VisibleHomeColumns(u32 rows)
 {
-    /* Current HOME Menu's six enlarge/reduce selections, indexed by rows.
-       The 5-row mode visibly spans 10 columns on the target HOME build. */
-    static const u8 columnsByRows[] = { 0, 3, 4, 6, 8, 10, 10 };
+    /* Documented HOME enlarge/reduce states, indexed by active row count. */
+    static const u8 columnsByRows[] = { 0, 3, 3, 5, 6, 8, 10 };
     return rows >= 1 && rows <= 6 ? columnsByRows[rows] : 0;
 }
 
@@ -2835,14 +2836,29 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
     }
 
     u32 homeRows = 0;
+    u32 persistedRows = 0;
     if (R_SUCCEEDED(res))
     {
-        homeRows = (u32)g_launcherRaw[CTH_HOME_ROWS_OFFSET] + 1;
+        persistedRows = (u32)g_launcherRaw[CTH_HOME_ROWS_OFFSET] + 1;
+        homeRows = persistedRows;
+        if (rowMajor)
+        {
+            if (g_activeRowsGeneration == 0 || g_activeRowsStored > 5)
+                res = (Result)-125;
+            else
+                homeRows = g_activeRowsStored + 1;
+        }
         if (homeRows < 1 || homeRows > 6) res = (Result)-113;
         g_sortDetailsLength += sprintf(g_sortDetails + g_sortDetailsLength,
-        "[TRAVERSAL]\nmode=%s home_rows=%lu home_columns=%lu "
-        "screen_capacity=%lu\n\n",
-            rowMajor ? "row-major" : "column-major", (unsigned long)homeRows,
+        "[TRAVERSAL]\nmode=%s row_source=%s persisted_rows=%lu "
+        "active_stored=%lu active_generation=%lu home_rows=%lu "
+        "home_columns=%lu screen_capacity=%lu\n\n",
+            rowMajor ? "row-major" : "column-major",
+            rowMajor ? "renderer-hook" : "persisted-launcher",
+            (unsigned long)persistedRows,
+            (unsigned long)g_activeRowsStored,
+            (unsigned long)g_activeRowsGeneration,
+            (unsigned long)homeRows,
             (unsigned long)VisibleHomeColumns(homeRows),
             (unsigned long)(homeRows * VisibleHomeColumns(homeRows)));
     }
@@ -3416,7 +3432,7 @@ static void WriteVisibleObjectInventory(Handle home, u32 records,
             indirectLocal, home, indirectPage, 0x2000, 0);
     int length = sprintf(g_objectInventory,
         "LumaHome visible object inventory\n"
-        "release=0.1.0-rc46\nformat=2\n"
+        "release=0.1.0-rc47\nformat=2\n"
         "records=%08lx record_map=%08lx indirect=%08lx indirect_map=%08lx\n"
         "columns=coordinate,inline_record,indirect_record,title_id,words2_7,word14,"
         "sd_slot,sd_position,sd_folder,launcher_slot,launcher_position,"
@@ -3521,7 +3537,7 @@ static void WriteVisibleObjectInventory(Handle home, u32 records,
         svcUnmapProcessMemoryEx(CUR_PROCESS_HANDLE, recordsLocal, recordsSize);
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/object-inventory-rc46.csv"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/object-inventory-rc47.csv"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -3536,7 +3552,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     char *report = g_layoutBackrefReport;
     int length = sprintf(report,
         "LumaHome live icon map report\n"
-        "release=0.1.0-rc46\nscan_version=2.12.0\n"
+        "release=0.1.0-rc47\nscan_version=2.13.0\n"
         "raw=%08lx\nprocessed=%08lx\n"
         "wrapper=003827d8\nrebuild_subobject=003827e4\n",
         g_lastRawAddress, g_lastProcessedAddress);
@@ -4304,7 +4320,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc46.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc47.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -4392,7 +4408,7 @@ Result CthulhuHomeMenu_CaptureObjectInventory(void)
     char captureReport[512];
     int captureLength = sprintf(captureReport,
         "LumaHome read-only capture report\n"
-        "release=0.1.0-rc46\n"
+        "release=0.1.0-rc47\n"
         "sd_discovery=%08lx\nraw=%08lx\nprocessed=%08lx\n"
         "launcher_file=%08lx\nlauncher_resident=%08lx\n"
         "launcher_address=%08lx\nlauncher_matches=%lu\n"
@@ -4403,7 +4419,7 @@ Result CthulhuHomeMenu_CaptureObjectInventory(void)
     IFile captureFile = {0};
     if (R_SUCCEEDED(IFile_Open(&captureFile, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/capture-report-rc46.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/capture-report-rc47.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -4432,6 +4448,10 @@ Result CthulhuHomeMenu_RunBackgroundSort(u16 selectedAlgorithm,
     WriteSortJournal("atomic-home-lock", lockResult);
     if (R_SUCCEEDED(lockResult))
     {
+        g_activeRowsStored = commandChannel != NULL ?
+            commandChannel[0x10C / 4] : 0;
+        g_activeRowsGeneration = commandChannel != NULL ?
+            commandChannel[0x110 / 4] : 0;
         g_livePlannedFolderCount = 0;
         g_liveProbeOnly = false;
         svcSleepThread(20 * 1000 * 1000LL);

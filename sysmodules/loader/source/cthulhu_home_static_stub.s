@@ -12,6 +12,7 @@
 .global cthulhuLayoutEventHook
 .global cthulhuIconControllerInitHook
 .global cthulhuIconRefreshObserveHook
+.global cthulhuActiveRowsObserveHook
 
 cthulhuHomeStubStart:
     stmfd sp!, {r0-r3, r12, lr}
@@ -313,6 +314,21 @@ cthulhuIconRefreshObserveHook:
     stmfd sp!, {r4-r11, r12, lr}
     ldr pc, iconRefreshObserveContinue
 iconRefreshObserveContinue: .word 0x001CA508
+
+@ HOME's serializer reads the renderer/controller's active rows-minus-one from
+@ controller+0x1C4 before comparing it with Launcher.dat[0xB51]. Publish that
+@ live value and a generation counter, then replay the displaced load.
+cthulhuActiveRowsObserveHook:
+    ldr r1, [r4, #0x1C4]
+    stmfd sp!, {r0, r2, r12}
+    ldr r12, channelAddress
+    str r1, [r12, #0x10C]
+    ldr r0, [r12, #0x110]
+    add r0, r0, #1
+    str r0, [r12, #0x110]
+    ldmfd sp!, {r0, r2, r12}
+    ldr pc, activeRowsObserveContinue
+activeRowsObserveContinue: .word 0x0021D42C
 
 @ HOME's central button-query wrappers. When the overlay owns input, report no
 @ buttons. Otherwise execute the displaced prologue and resume each function.

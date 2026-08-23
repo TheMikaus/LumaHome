@@ -19,6 +19,7 @@ extern const u8 cthulhuInputDispatcherHook[];
 extern const u8 cthulhuLayoutEventHook[];
 extern const u8 cthulhuIconControllerInitHook[];
 extern const u8 cthulhuIconRefreshObserveHook[];
+extern const u8 cthulhuActiveRowsObserveHook[];
 
 static u32 ReadU32(const u8 *image, u32 address)
 {
@@ -67,6 +68,7 @@ bool CthulhuHomeStaticPatch_Apply(u64 titleId, u8 *image, u32 imageSize)
         {0x001BA594, 0xE3520008},
         {0x001D11A0, 0xEBFFA34B},
         {0x001CA504, 0xE92D5FF0},
+        {0x0021D428, 0xE59411C4},
     };
     for (u32 i = 0; i < sizeof(signatures) / sizeof(signatures[0]); i++)
         if (ReadU32(image, signatures[i].address) != signatures[i].instruction)
@@ -117,6 +119,10 @@ bool CthulhuHomeStaticPatch_Apply(u64 titleId, u8 *image, u32 imageSize)
     target = CTH_CODE_CAVE +
              (u32)(cthulhuIconRefreshObserveHook - cthulhuHomeStubStart);
     if (!WriteBranch(image, 0x001CA504, target, false))
+        return false;
+    target = CTH_CODE_CAVE +
+             (u32)(cthulhuActiveRowsObserveHook - cthulhuHomeStubStart);
+    if (!WriteBranch(image, 0x0021D428, target, false))
         return false;
     return true;
 }
