@@ -112,3 +112,19 @@ For every new hardware iteration:
    document exactly what the tester should exercise.
 5. Append the result, conclusion, and next action here; commit the code and
    documentation together when practical.
+
+## Iteration 2026-08-23 — reproducible Docker build setup
+
+- Pulled `lumahome/home-menu-framework`; it was already current at `9f980df`.
+- Added a self-contained, pinned `Dockerfile` instead of requiring build files
+  from the legacy Cthulhu checkout.
+- Added `build_docker.ps1`, which checks daemon access, builds the toolchain,
+  compiles with `make -j2`, verifies `boot.firm`, and prints its SHA-256.
+- Added `DOCKER-BUILD.md` with step-by-step Windows, Linux, and macOS setup,
+  incremental/clean build commands, troubleshooting, and safe chainload-only
+  deployment instructions.
+- The Docker CLI is installed on the development host, but the daemon was not
+  accessible to this session, so the image build could not be executed here.
+  The Dockerfile matches the previously used Cthulhu toolchain definition.
+- Next: run `.\build_docker.ps1` with Docker Desktop active and compare the
+  produced `boot.firm` hash/build behavior with the established RC baseline.

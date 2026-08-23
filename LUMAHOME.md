@@ -23,7 +23,11 @@ release-candidate reports are written under `/3ds/LumaHome`.
 
 ## Building
 
-Build with a current devkitARM/libctru environment supported by Luma3DS:
+The recommended reproducible build uses the repository's pinned Docker image.
+See [`DOCKER-BUILD.md`](DOCKER-BUILD.md) for host setup, exact commands,
+troubleshooting, output hashing, and safe test deployment.
+
+To build with an existing current devkitARM/libctru environment instead:
 
 ```sh
 make -j2
