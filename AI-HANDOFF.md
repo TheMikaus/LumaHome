@@ -327,11 +327,36 @@ SD card, so a failed iteration produces test material instead of nothing.
 
 ### Build and CI
 
-A GitHub Actions workflow was written for `.github/workflows/build.yml` that
-builds inside the official `devkitpro/devkitarm` container, installs
-`firmtool`, and uploads `boot.firm` renamed to `LumaHome-<short sha>.firm`
-alongside its SHA-256. It could not be committed from the review environment
-(remote writes to `.github/workflows/` are blocked there) and has not been run
-on a runner, so its first execution is also its first verification. Adding it
-gives every commit a compile check and a downloadable, uniquely named payload
-without a local toolchain.
+**devkitPro's servers block this class of environment.** After the account's
+network allowlist was opened for `apt.devkitpro.org`, `downloads.devkitpro.org`
+and `pkg.devkitpro.org`, the CONNECT tunnel succeeds but Cloudflare on
+devkitPro's side answers HTTP 403 to every path on every one of those hosts —
+the installer script, `dists/stable/Release`, the package index — including
+with an `apt` user-agent. This is a datacenter-IP block on their end, not an
+allowlist problem, and it applies equally to the cloud container and to the
+Linux VM behind the desktop app. Do not spend time on it again: no
+AI-assistant sandbox of this kind will install devkitARM directly.
+
+The consequence is that RC48 and anything after it cannot be compiled during
+review. Treat AI-authored changes as reviewed-not-built until CI or the
+maintainer says otherwise.
+
+`.github/workflows/build.yml` is the answer: GitHub's runners have
+unrestricted network and pull `devkitpro/devkitarm` themselves. The workflow
+verifies the toolchain (explicit libctru check so a missing header set reports
+one legible error), installs `firmtool` from source with a pip fallback for
+older images, builds, and uploads `boot.firm` renamed to
+`LumaHome-<short sha>.firm` alongside its SHA-256 — which mechanically enforces
+the "never deploy as root boot.firm" and "prove which payload booted" rules in
+"Safety and deployment" above. Checkout uses `fetch-depth: 0` and
+`fetch-tags: true` because the root Makefile derives `REVISION` from
+`git describe --tags --match v[0-9]*`; the fork carries the 84 upstream tags
+and currently describes as `v13.4-<n>-g<sha>`.
+
+`firmtool` is the only dependency beyond the image. The default `all` target
+needs no network: the `hbmenu.zip` curl lives under the `release` target only.
+
+The file could not be written to the maintainer's checkout from the review
+environment (remote writes to `.github/workflows/` are blocked there), so it
+must be added by hand. It has not yet run on a runner; its first execution is
+also its first verification.
