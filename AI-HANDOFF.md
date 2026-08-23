@@ -123,8 +123,14 @@ For every new hardware iteration:
 - Added `DOCKER-BUILD.md` with step-by-step Windows, Linux, and macOS setup,
   incremental/clean build commands, troubleshooting, and safe chainload-only
   deployment instructions.
-- The Docker CLI is installed on the development host, but the daemon was not
-  accessible to this session, so the image build could not be executed here.
-  The Dockerfile matches the previously used Cthulhu toolchain definition.
-- Next: run `.\build_docker.ps1` with Docker Desktop active and compare the
-  produced `boot.firm` hash/build behavior with the established RC baseline.
+- The first Docker check ran as the restricted `chronomagus\codexsandboxoffline`
+  account and was denied access to the user's Docker configuration and named
+  pipe. This was a sandbox identity issue, not a broken Docker installation.
+- Re-ran `.\build_docker.ps1` with normal host permissions. The toolchain image
+  built successfully, LumaHome compiled successfully, and `boot.firm` was
+  produced with SHA-256
+  `7618F89BC1B7826CDEF1C3FB813B12860E5B90C425E7D3288F2ED73BC4A2AD7B`.
+  This exactly matches the established RC47 payload hash.
+- Conclusion: the self-contained Dockerfile, Windows helper, and documented
+  Windows build path are verified. Next development can continue from RC47;
+  Linux/macOS commands remain structurally equivalent but were not run here.
