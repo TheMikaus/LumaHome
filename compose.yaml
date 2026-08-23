@@ -1,0 +1,22 @@
+services:
+  devkitarm:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Same tag build_docker.ps1 uses, so both entry points share one image.
+    image: lumahome-toolchain:1
+    container_name: lumahome-devkitarm
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    environment:
+      # The bind-mounted repo is owned by the host user, not by root, so git
+      # would otherwise refuse to run here -- and the Makefiles shell out to
+      # `git describe` to stamp REVISION/VERSION/COMMIT.
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: safe.directory
+      GIT_CONFIG_VALUE_0: /workspace
+    # Idle so `docker compose exec devkitarm make ...` reuses one container.
+    command: ["sleep", "infinity"]
+    init: true
+    stop_grace_period: 2s

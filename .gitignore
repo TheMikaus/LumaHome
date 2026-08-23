@@ -22,3 +22,8 @@ exceptions/arm11/build
 
 Luma3DS*.zip
 hbmenu.zip
+
+# Docker build loop
+.claude/settings.local.json
+compose.override.yaml
+compose.override.yml

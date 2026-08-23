@@ -360,3 +360,78 @@ The file could not be written to the maintainer's checkout from the review
 environment (remote writes to `.github/workflows/` are blocked there), so it
 must be added by hand. It has not yet run on a runner; its first execution is
 also its first verification.
+
+## Iteration 2026-08-23 — reproducible Docker build setup
+
+- Pulled `lumahome/home-menu-framework`; it was already current at `9f980df`.
+- Added a self-contained, pinned `Dockerfile` instead of requiring build files
+  from the legacy Cthulhu checkout.
+- Added `build_docker.ps1`, which checks daemon access, builds the toolchain,
+  compiles with `make -j2`, verifies `boot.firm`, and prints its SHA-256.
+- Added `DOCKER-BUILD.md` with step-by-step Windows, Linux, and macOS setup,
+  incremental/clean build commands, troubleshooting, and safe chainload-only
+  deployment instructions.
+- The first Docker check ran as the restricted `chronomagus\codexsandboxoffline`
+  account and was denied access to the user's Docker configuration and named
+  pipe. This was a sandbox identity issue, not a broken Docker installation.
+- Re-ran `.\build_docker.ps1` with normal host permissions. The toolchain image
+  built successfully, LumaHome compiled successfully, and `boot.firm` was
+  produced with SHA-256
+  `7618F89BC1B7826CDEF1C3FB813B12860E5B90C425E7D3288F2ED73BC4A2AD7B`.
+  This exactly matches the established RC47 payload hash.
+- Conclusion: the self-contained Dockerfile, Windows helper, and documented
+  Windows build path are verified. Next development can continue from RC47;
+  Linux/macOS commands remain structurally equivalent but were not run here.
+
+## 2026-08-23 (later) — compose service alongside the existing Docker setup
+
+Additive to the previous entry; the pinned `Dockerfile`, `build_docker.ps1` and
+`DOCKER-BUILD.md` from that session are unchanged and remain the documented
+path.
+
+`compose.yaml` adds one service, `devkitarm`, built from that same `Dockerfile`
+and tagged with the same `lumahome-toolchain:1` image, that idles on
+`sleep infinity` so an edit → build → diagnose loop runs as
+`docker compose exec devkitarm make -j2` instead of starting a container per
+build. It mounts the checkout at `/workspace` rather than `/project` — the
+Makefiles are indifferent — and sets `safe.directory` through `GIT_CONFIG_*`
+environment variables rather than modifying the image, so git works on the
+host-owned bind mount.
+
+**Verified, not merely written.** Built `6db5e04` through the compose service:
+`make clean` then `make all`, and again with `make -j2`, both producing
+`boot.firm` at 357,888 bytes with SHA-256
+`e5e150687cc278e811670e6373f8f4b80bb8ed1678c94ac2fe263297cc470045`, and zero
+compiler or linker diagnostics under GCC 16.1.0 — worth noting given every
+subproject builds `-Wall -Wextra -Werror`. This hash differs from the
+`7618F89B…` recorded above because that was a build of `9f980df` (RC47); this
+is `6db5e04`, three commits later. Different source, different payload, not a
+regression.
+
+The only build output containing the word "warning" is makerom's
+`[EXHEADER WARNING] Parameter Not Found: "AccessControlInfo/ServiceAccessControl"`
+for `sm` and `pxi`, which is upstream-expected: those two RSF files deliberately
+omit the section.
+
+**Version stamping is wrong in this checkout, and no container change can fix
+it.** The working copy is a shallow clone (`.git/shallow` present, 53 commits)
+and no tag is an ancestor of HEAD, so `git describe --tags --match v[0-9]*`
+fails inside and outside the container alike. The Makefiles fall back to
+`REVISION=v0.0.0-0` and version `0.0.0`, and because `arm9/Makefile` infers
+release status from `git describe | grep -` being empty, it also sets
+**`IS_RELEASE=1`**. A payload built here therefore self-reports as release
+0.0.0, which directly undercuts the "prove which payload booted" rule in
+"Safety and deployment" and step 5 of the deploy checklist in `DOCKER-BUILD.md`.
+`git fetch --unshallow` on the host resolves it. Check the version the overlay
+reports before trusting a build for hardware testing.
+
+Also note for the `release` target specifically: it is the only target needing
+network at build time (`hbmenu.zip`), and it names its zip after
+`$(notdir $(CURDIR))`, which inside the container is the mount point rather than
+the project name. Use `all`.
+
+`.claude/settings.local.json` (gitignored) lets future assistant sessions run the
+loop without prompting: `acceptEdits` by default, an allowlist covering only
+`docker compose build/up/ps/logs` and `docker compose exec devkitarm <build
+command>` plus read-only git, and an explicit denylist for `docker run`,
+`git commit/push/reset/clean`, and destructive filesystem commands.
