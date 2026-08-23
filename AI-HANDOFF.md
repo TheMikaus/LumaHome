@@ -266,13 +266,72 @@ Version strings disagree across the repository: `LUMAHOME.md` says `rc8`,
 There is no CI. A compile-only devkitARM job on push would catch a class of
 breakage that currently costs an SD-card round trip to discover.
 
+### Changes made this session — RC48, untested on hardware
+
+Version bumped `0.1.0-rc47` -> `0.1.0-rc48` across the diagnostics menu, the
+runtime logger, and the report filenames, so the tester can prove which
+payload booted. **Nothing below has been built or run on a console** — there
+is no devkitARM in the review environment (`apt.devkitpro.org` is unreachable
+from it), only a syntax-level check with a generic `arm-none-eabi` toolchain.
+
+1. **`-125` demoted from failure to fallback.** `ApplySdSort` now treats the
+   renderer observation as an override of `persistedRows`, not a
+   precondition. The `[TRAVERSAL]` block gains a real `row_source` value —
+   `renderer-hook`, `persisted-fallback-no-observation`, or
+   `persisted-fallback-observation-out-of-range` — replacing the previous
+   value, which was derived from `rowMajor` alone and therefore always
+   reported `renderer-hook` in row-major mode regardless of what was actually
+   used.
+2. **Diagnostic `-125` retired; coordinate collisions are now `-134`.** The
+   two conditions previously shared a code, so journals could not distinguish
+   "renderer hook never ran" from "two titles planned onto one slot". A `-125`
+   in any future log therefore means an old payload.
+3. **Input fixtures are captured before anything that can fail.** New
+   `WriteSortFixture` writes `/3ds/Cthulhu/pre-sort-input-SaveData.dat`
+   (`0x2DA0`) immediately after `ReadSdSaveData`, and
+   `/3ds/Cthulhu/pre-sort-input-Launcher.dat` (`0x2490`) immediately after the
+   Launcher source is resolved. Both results are journalled and reported in a
+   new `[FIXTURES]` block. `BackupSdSaveData` at step 3-of-7 is unchanged and
+   remains the pre-write safety copy; these are separate files and do not
+   collide with it or with the shutdown path's
+   `pre-folder-commit-Launcher.dat`. A fixture write failure is recorded and
+   ignored, never fatal.
+
+Net effect: a sort that aborts early now still leaves both input blobs on the
+SD card, so a failed iteration produces test material instead of nothing.
+
+### What to test on RC48
+
+1. Boot the versioned RC48 payload; confirm the overlay reports `rc48`.
+2. Apply row-major A-Z. It should no longer fail with `-125`. Record
+   `row_source` from `[TRAVERSAL]`.
+3. If `row_source` is a `persisted-fallback-*` value and placement is still
+   correct, the renderer hook at `0x0021D428` is not needed and hook #17 can
+   be removed — see the hook-reduction step above.
+4. If placement is wrong only in the fallback case, the persisted row count
+   disagrees with the live layout; capture both values before changing
+   anything.
+5. Confirm `/3ds/Cthulhu/pre-sort-input-*.dat` exist afterwards, including
+   after a deliberately failing sort. Send both files to the host-side test
+   work.
+
 ### Next actions
 
-1. `-125` fallback to `persistedRows` — unblocks the pending RC47 test.
-2. Move the SD/Launcher backups before the grid check so failed runs still
-   produce fixtures.
-3. Extract the pure layout core and stand up host-side unit tests.
-4. Loud, specific patch-failure diagnostics, then signature scanning.
-5. Revisit search polish (NAND/cart titles are currently filtered out by
+1. Build and test RC48 per the above.
+2. Extract the pure layout core and stand up host-side unit tests against the
+   captured fixtures.
+3. Loud, specific patch-failure diagnostics, then signature scanning.
+4. Revisit search polish (NAND/cart titles are currently filtered out by
    `SearchEntryMatches`; the L/R alphabet input needs replacing) once sorting
    is off the critical path.
+
+### Build and CI
+
+A GitHub Actions workflow was written for `.github/workflows/build.yml` that
+builds inside the official `devkitpro/devkitarm` container, installs
+`firmtool`, and uploads `boot.firm` renamed to `LumaHome-<short sha>.firm`
+alongside its SHA-256. It could not be committed from the review environment
+(remote writes to `.github/workflows/` are blocked there) and has not been run
+on a runner, so its first execution is also its first verification. Adding it
+gives every commit a compile check and a downloadable, uniquely named payload
+without a local toolchain.

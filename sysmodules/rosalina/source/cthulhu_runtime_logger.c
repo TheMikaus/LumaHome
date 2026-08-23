@@ -131,7 +131,7 @@ static void writeAppliedOptions(bool reverse, bool foldersFirst,
     char report[384];
     int length = sprintf(report,
         "LumaHome last applied sort options\n"
-        "release=0.1.0-rc47\n"
+        "release=0.1.0-rc48\n"
         "direction=%s\nfolder_placement=%s\ncollapse_gaps=%s\ntraversal=%s\n",
         reverse ? "Z-A" : "A-Z", foldersFirst ? "before" : "after",
         collapseGaps ? "on" : "off", rowMajor ? "row-major" : "column-major");
@@ -598,7 +598,7 @@ static void writeSnapshot(u32 pid, volatile u32 *v, u32 held, u32 pressed,
     char report[1800];
     int n = sprintf(report,
         "LumaHome HOME OSD automatic runtime log\n"
-        "release=0.1.0-rc47\nruntime_version=1.12.3\n"
+        "release=0.1.0-rc48\nruntime_version=1.12.3\n"
         "mode=active-home-controller-v1123\n"
         "pid=%lu\nmarker=%08lx\nmarker_ok=%u\n"
         "heartbeat=%lu\noverlay=%lu\nheld=%08lx\npressed=%08lx\n"

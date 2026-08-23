@@ -19,7 +19,7 @@
 #define CTH_LAUNCHER_TO_SD_DELTA (CTH_SD_RAW_ADDRESS - CTH_NAND_RAW_ADDRESS)
 #define CTH_REQUEST_MAGIC 0x53544843
 #define CTH_REQUEST_VERSION 3
-#define CTH_SORT_BUILD_VERSION "0.1.0-rc47"
+#define CTH_SORT_BUILD_VERSION "0.1.0-rc48"
 #define CTH_INLINE_FOLDER_RECORD_RECOVERY_HINT 190
 #define CTH_FRAMEWORK_BUILD_VERSION "0.7.7-multi-home"
 #define CTH_FOLDER_POSITION_OFFSET 0x11DC
@@ -1932,6 +1932,31 @@ static Result SaveCommittedSnapshot(void)
     return res;
 }
 
+/* Capture the exact bytes a sort ran against, before anything that can fail.
+   BackupSdSaveData above is the pre-write safety copy and only runs once
+   planning has already succeeded, so a run that aborted during discovery or
+   grid selection, historically the common case, left no evidence behind at
+   all and the SD-card round trip was wasted.  These fixtures are also what the
+   host-side layout tests are built from, so every failed hardware iteration
+   should still produce them.  Failure to write one is recorded and ignored:
+   losing a fixture must never abort a sort that would otherwise work. */
+static Result WriteSortFixture(const char *path, const void *data, u32 size)
+{
+    IFile file = {0};
+    Result res = IFile_Open(&file, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, ""),
+        fsMakePath(PATH_ASCII, path), FS_OPEN_CREATE | FS_OPEN_WRITE);
+    if (R_FAILED(res))
+        return res;
+    u64 written = 0;
+    res = IFile_Write(&file, &written, data, size, FS_WRITE_FLUSH);
+    if (R_SUCCEEDED(res) && written != size)
+        res = (Result)-135;
+    if (R_SUCCEEDED(res))
+        res = IFile_SetSize(&file, size);
+    IFile_Close(&file);
+    return res;
+}
+
 static int FindRawTitleSlot(const u8 *raw, bool nand, u64 titleId, u16 *slotOut,
                             s16 *positionOut, s8 *folderOut)
 {
@@ -2649,6 +2674,10 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
     if (R_FAILED(res = ReadSdSaveData()))
         return res;
     memcpy(g_sortOriginal, g_sortRaw, sizeof(g_sortOriginal));
+    Result sdFixture = WriteSortFixture(
+        "/3ds/Cthulhu/pre-sort-input-SaveData.dat", g_sortRaw,
+        sizeof(g_sortRaw));
+    WriteSortJournal("fixture-sd-extdata", sdFixture);
     u16 used = 0;
     if (!ValidateLayout(g_sortRaw, false, &used))
         return (Result)-20;
@@ -2779,11 +2808,18 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
             launcherUsed = launcherFileUsed;
             memcpy(g_launcherOriginal, g_launcherRaw, CTH_LAUNCHER_SIZE);
         }
+        Result launcherFixture = WriteSortFixture(
+            "/3ds/Cthulhu/pre-sort-input-Launcher.dat", g_launcherRaw,
+            CTH_LAUNCHER_SIZE);
+        WriteSortJournal("fixture-launcher", launcherFixture);
         g_sortDetailsLength += sprintf(g_sortDetails + g_sortDetailsLength,
             "[LAUNCHER_SOURCE]\nfile_result=%08lx file_valid=%lu "
             "source=%s folders=%u\n\n", launcherFileResult,
             launcherFileValid ? 1UL : 0UL,
             launcherFileValid ? "file" : "resident", launcherUsed);
+        g_sortDetailsLength += sprintf(g_sortDetails + g_sortDetailsLength,
+            "[FIXTURES]\nsd_extdata=%08lx launcher=%08lx\n\n",
+            sdFixture, launcherFixture);
 
         /* The archive can be locked while HOME's resident title table omits
            folder metadata. Recover metadata only for folder IDs that current
@@ -2837,16 +2873,30 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
 
     u32 homeRows = 0;
     u32 persistedRows = 0;
+    const char *rowSource = "persisted-launcher";
     if (R_SUCCEEDED(res))
     {
         persistedRows = (u32)g_launcherRaw[CTH_HOME_ROWS_OFFSET] + 1;
         homeRows = persistedRows;
         if (rowMajor)
         {
-            if (g_activeRowsGeneration == 0 || g_activeRowsStored > 5)
-                res = (Result)-125;
-            else
+            /* The renderer observation is an override, not a precondition.
+               Launcher.dat offset 0xB51 already carries the active row count
+               and ValidateResidentLauncher has range-checked it, so a missing
+               or out-of-range observation degrades to the persisted value
+               instead of failing the whole sort.  row_source below records
+               which one was actually consumed, so a wrong grid can be told
+               apart from a hook that never ran.  Retired diagnostic -125 was
+               the hard failure this replaces. */
+            if (g_activeRowsGeneration != 0 && g_activeRowsStored <= 5)
+            {
                 homeRows = g_activeRowsStored + 1;
+                rowSource = "renderer-hook";
+            }
+            else
+                rowSource = g_activeRowsGeneration == 0 ?
+                    "persisted-fallback-no-observation" :
+                    "persisted-fallback-observation-out-of-range";
         }
         if (homeRows < 1 || homeRows > 6) res = (Result)-113;
         g_sortDetailsLength += sprintf(g_sortDetails + g_sortDetailsLength,
@@ -2854,7 +2904,7 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
         "active_stored=%lu active_generation=%lu home_rows=%lu "
         "home_columns=%lu screen_capacity=%lu\n\n",
             rowMajor ? "row-major" : "column-major",
-            rowMajor ? "renderer-hook" : "persisted-launcher",
+            rowSource,
             (unsigned long)persistedRows,
             (unsigned long)g_activeRowsStored,
             (unsigned long)g_activeRowsGeneration,
@@ -3186,10 +3236,14 @@ static Result ApplySdSort(u16 selectedAlgorithm, bool stageFolders,
                 {
                     bool *occupied = mutation->mediaType == 0 ?
                                      launcherOccupied : sdOccupied;
+                    /* Distinct from the retired -125: this is a planned
+                       coordinate collision or an out-of-range slot, not a
+                       missing renderer observation.  The two shared a code
+                       until 2026-08-23, which made the journals ambiguous. */
                     if (mutation->newPosition < 0 ||
                         mutation->newPosition >= CTH_LAYOUT_SLOTS ||
                         occupied[mutation->newPosition])
-                        res = (Result)-125;
+                        res = (Result)-134;
                     else
                         occupied[mutation->newPosition] = true;
                 }
@@ -3432,7 +3486,7 @@ static void WriteVisibleObjectInventory(Handle home, u32 records,
             indirectLocal, home, indirectPage, 0x2000, 0);
     int length = sprintf(g_objectInventory,
         "LumaHome visible object inventory\n"
-        "release=0.1.0-rc47\nformat=2\n"
+        "release=0.1.0-rc48\nformat=2\n"
         "records=%08lx record_map=%08lx indirect=%08lx indirect_map=%08lx\n"
         "columns=coordinate,inline_record,indirect_record,title_id,words2_7,word14,"
         "sd_slot,sd_position,sd_folder,launcher_slot,launcher_position,"
@@ -3537,7 +3591,7 @@ static void WriteVisibleObjectInventory(Handle home, u32 records,
         svcUnmapProcessMemoryEx(CUR_PROCESS_HANDLE, recordsLocal, recordsSize);
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/object-inventory-rc47.csv"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/object-inventory-rc48.csv"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -3552,7 +3606,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     char *report = g_layoutBackrefReport;
     int length = sprintf(report,
         "LumaHome live icon map report\n"
-        "release=0.1.0-rc47\nscan_version=2.13.0\n"
+        "release=0.1.0-rc48\nscan_version=2.13.0\n"
         "raw=%08lx\nprocessed=%08lx\n"
         "wrapper=003827d8\nrebuild_subobject=003827e4\n",
         g_lastRawAddress, g_lastProcessedAddress);
@@ -4320,7 +4374,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc47.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc48.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -4408,7 +4462,7 @@ Result CthulhuHomeMenu_CaptureObjectInventory(void)
     char captureReport[512];
     int captureLength = sprintf(captureReport,
         "LumaHome read-only capture report\n"
-        "release=0.1.0-rc47\n"
+        "release=0.1.0-rc48\n"
         "sd_discovery=%08lx\nraw=%08lx\nprocessed=%08lx\n"
         "launcher_file=%08lx\nlauncher_resident=%08lx\n"
         "launcher_address=%08lx\nlauncher_matches=%lu\n"
@@ -4419,7 +4473,7 @@ Result CthulhuHomeMenu_CaptureObjectInventory(void)
     IFile captureFile = {0};
     if (R_SUCCEEDED(IFile_Open(&captureFile, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/capture-report-rc47.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/capture-report-rc48.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
