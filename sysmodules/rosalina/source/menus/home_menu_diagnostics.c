@@ -19,7 +19,7 @@
 #define CTH_LAUNCHER_TO_SD_DELTA (CTH_SD_RAW_ADDRESS - CTH_NAND_RAW_ADDRESS)
 #define CTH_REQUEST_MAGIC 0x53544843
 #define CTH_REQUEST_VERSION 3
-#define CTH_SORT_BUILD_VERSION "0.1.0-rc44"
+#define CTH_SORT_BUILD_VERSION "0.1.0-rc45"
 #define CTH_INLINE_FOLDER_RECORD_RECOVERY_HINT 190
 #define CTH_FRAMEWORK_BUILD_VERSION "0.7.7-multi-home"
 #define CTH_FOLDER_POSITION_OFFSET 0x11DC
@@ -1127,6 +1127,19 @@ static bool g_liveProbeOnly = false;
 static u16 g_liveDesiredTopLevelAt[CTH_LAYOUT_SLOTS];
 static s16 g_liveTitlePositions[CTH_LAYOUT_SLOTS];
 static s16 g_liveFolderPositions[CTH_FOLDER_COUNT];
+
+static bool ValidateResidentLauncher(const u8 *resident, u16 *usedOut)
+{
+    /* HOME keeps the Launcher object beginning at file offset +8, without
+       Launcher.dat's header. Reconstruct that header before applying the
+       documented file-layout validator. */
+    memset(g_launcherRaw, 0, CTH_LAUNCHER_SIZE);
+    g_launcherRaw[0] = 4;
+    memcpy(g_launcherRaw + 8, resident, CTH_LAUNCHER_SIZE - 8);
+    if (g_launcherRaw[CTH_HOME_ROWS_OFFSET] > 5)
+        return false;
+    return ValidateLayout(g_launcherRaw, true, usedOut);
+}
 
 static Result DiscoverLauncherRuntime(Handle process, u32 preferredAddress,
                                       u32 *addressOut,
@@ -2427,7 +2440,7 @@ static Result DiscoverLauncherRuntime(Handle process, u32 preferredAddress,
                     if (!quickMatch)
                         continue;
                     u16 used = 0;
-                    if (ValidateLayout(bytes + offset, true, &used))
+                    if (ValidateResidentLauncher(bytes + offset, &used))
                     {
                         u32 candidateAddress = mem.base_addr + offset;
                         if (g_launcherCandidateCount < 16)
@@ -3399,7 +3412,7 @@ static void WriteVisibleObjectInventory(Handle home, u32 records,
             indirectLocal, home, indirectPage, 0x2000, 0);
     int length = sprintf(g_objectInventory,
         "LumaHome visible object inventory\n"
-        "release=0.1.0-rc44\nformat=2\n"
+        "release=0.1.0-rc45\nformat=2\n"
         "records=%08lx record_map=%08lx indirect=%08lx indirect_map=%08lx\n"
         "columns=coordinate,inline_record,indirect_record,title_id,words2_7,word14,"
         "sd_slot,sd_position,sd_folder,launcher_slot,launcher_position,"
@@ -3504,7 +3517,7 @@ static void WriteVisibleObjectInventory(Handle home, u32 records,
         svcUnmapProcessMemoryEx(CUR_PROCESS_HANDLE, recordsLocal, recordsSize);
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/object-inventory-rc44.csv"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/object-inventory-rc45.csv"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -3519,7 +3532,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     char *report = g_layoutBackrefReport;
     int length = sprintf(report,
         "LumaHome live icon map report\n"
-        "release=0.1.0-rc44\nscan_version=2.11.0\n"
+        "release=0.1.0-rc45\nscan_version=2.11.1\n"
         "raw=%08lx\nprocessed=%08lx\n"
         "wrapper=003827d8\nrebuild_subobject=003827e4\n",
         g_lastRawAddress, g_lastProcessedAddress);
@@ -4287,7 +4300,7 @@ static u32 ScanLiveIconClassV010Rc8(Handle home)
     IFile file = {0};
     if (R_SUCCEEDED(IFile_Open(&file, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc44.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/live-map-0.1.0-rc45.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
@@ -4375,7 +4388,7 @@ Result CthulhuHomeMenu_CaptureObjectInventory(void)
     char captureReport[512];
     int captureLength = sprintf(captureReport,
         "LumaHome read-only capture report\n"
-        "release=0.1.0-rc44\n"
+        "release=0.1.0-rc45\n"
         "sd_discovery=%08lx\nraw=%08lx\nprocessed=%08lx\n"
         "launcher_file=%08lx\nlauncher_resident=%08lx\n"
         "launcher_address=%08lx\nlauncher_matches=%lu\n"
@@ -4386,7 +4399,7 @@ Result CthulhuHomeMenu_CaptureObjectInventory(void)
     IFile captureFile = {0};
     if (R_SUCCEEDED(IFile_Open(&captureFile, ARCHIVE_SDMC,
         fsMakePath(PATH_EMPTY, ""),
-        fsMakePath(PATH_ASCII, "/3ds/LumaHome/capture-report-rc44.txt"),
+        fsMakePath(PATH_ASCII, "/3ds/LumaHome/capture-report-rc45.txt"),
         FS_OPEN_CREATE | FS_OPEN_WRITE)))
     {
         u64 written = 0;
